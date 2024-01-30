@@ -116,8 +116,8 @@ kedro run --pipeline="<pipeline-name>"
 Docker is the recommended approach for a clean installation on most machines.
 #### Listing Pipelines
 ```commandline
-docker run --mount type=bind,src=$(pwd),dst=/root/code odx run registry list #UNIX/Mac
-docker run --mount type=bind,src=$(cd),dst=/root/code odx run registry list #Windows
+docker run --mount type=bind,src=$(pwd),dst=/root/code odx registry list #UNIX/Mac
+docker run --mount type=bind,src=$(cd),dst=/root/code odx registry list #Windows
 ```
 #### Running Pipelines
 ```commandline
