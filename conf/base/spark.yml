@@ -1,0 +1,14 @@
+spark.master: local[*]
+spark.appName: ODXInference
+spark.executor.memory: 10g
+spark.driver.memory: 5g
+spark.driver.maxResultSize: 3g
+spark.scheduler.mode: FAIR
+spark.sql.adaptive.enabled: true #enable adaptive query planning
+# These settings help Spark Standalone cluster to launch correctly
+spark.hadoop.security.authentication: simple
+spark.hadoop.security.authorization: false
+spark.eventLog.enabled: false
+spark.sql.session.timeZone: "UTC"
+spark.sql.optimizer.maxIterations: 400
+spark.sql.parquet.compression.codec: "gzip"

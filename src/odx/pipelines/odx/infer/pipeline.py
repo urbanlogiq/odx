@@ -1,0 +1,269 @@
+# Copyright (c) 2024, CommunityLogiq Software
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Pipeline for infering ODX from prepared data.
+"""
+from kedro.pipeline import Pipeline, node
+from .nodes import (
+    get_relevant_stop_times,
+    build_possible_transfers,
+    merge_stop_locations_onto_taps,
+    get_possible_max_boarding_alternatives,
+    get_possible_boarding_trip_ids,
+    get_possible_alighting_points,
+    get_transfer_distance_and_minimum_required_transfer_time,
+    select_alighting_based_on_overall_probability,
+    get_alighting_probability,
+    remove_impossible_journeys,
+    reshape_journeys,
+    reshape_failed_journeys,
+    create_journey_ids_based_on_headway,
+    get_event_type,
+    insert_interlining_events,
+    detect_looped_trips_according_to_threshold,
+    get_journey_start_dates,
+    get_year_months,
+    remove_journeys_with_no_destination,
+    validate_successful_journeys,
+    remove_implicit_interlining_events,
+    get_run_metrics,
+)
+
+
+def create_pipeline(**kwargs) -> Pipeline:
+    """Create the pipeline.
+
+    Args:
+        **kwargs:
+    """
+    if "tags" in kwargs.keys():
+        tags = kwargs["tags"]
+    else:
+        tags = ["infer", "odx"]
+    return Pipeline(
+        [
+            node(
+                func=get_year_months,
+                inputs=[
+                    "hop_spark_df_prepared_spark_df",
+                    "params:hop_prepared_datetime_column",
+                    "params:hop_prepared_year_months",
+                ],
+                outputs="hop_spark_df_with_year_month_selected",
+                tags=tags,
+                name="select_year_months_to_run_inference_for",
+            ),
+            node(
+                func=get_relevant_stop_times,
+                inputs=[
+                    "hop_spark_df_with_year_month_selected",
+                    "stop_times_prepared_spark_df",
+                ],
+                outputs="time_localized_stop_times_prepared_spark_df",
+                tags=tags,
+                name="get_relevant_prepared_stop_times",
+            ),
+            node(
+                func=merge_stop_locations_onto_taps,
+                inputs=[
+                    "hop_spark_df_with_year_month_selected",
+                    "time_localized_stop_times_prepared_spark_df",
+                ],
+                outputs="hop_spark_df_with_stop_locations",
+                tags=tags,
+                name="merge_stop_locations_onto_taps",
+            ),
+            node(
+                func=build_possible_transfers,
+                inputs=[
+                    "hop_spark_df_with_stop_locations",
+                    "params:unique_rider_column",
+                    "params:transfer_table_columns",
+                ],
+                outputs="identified_possible_transfers_spark_df",
+                tags=tags,
+                name="identify_possible_transfers",
+            ),
+            node(
+                func=get_possible_max_boarding_alternatives,
+                inputs=[
+                    "time_localized_stop_times_prepared_spark_df",
+                    "params:max_line_stop_alternative_distance_threshold",
+                    "params:non_max_allowed_alternatives",
+                ],
+                outputs="max_line_stop_alternatives_spark_df",
+                tags=tags,
+                name="get_stop_alternatives_for_max_lines",
+            ),
+            node(
+                func=get_possible_boarding_trip_ids,
+                inputs=[
+                    "identified_possible_transfers_spark_df",
+                    "time_localized_stop_times_prepared_spark_df",
+                    "max_line_stop_alternatives_spark_df",
+                ],
+                outputs="transfers_w_identified_possible_boarding_trip_ids",
+                tags=tags,
+                name="merge_stop_times_onto_transfers",
+            ),
+            node(
+                func=get_possible_alighting_points,
+                inputs=[
+                    "transfers_w_identified_possible_boarding_trip_ids",
+                    "time_localized_stop_times_prepared_spark_df",
+                    "interlining_trip_ids_prepared_spark_df",
+                    "params:allow_interlining",
+                ],
+                outputs=[
+                    "transfers_w_identified_possible_alighting_point",
+                    "stop_times_with_interlining_trip_ids_spark_df",
+                ],
+                tags=tags,
+                name="get_possible_alighting_points",
+            ),
+            node(
+                func=get_transfer_distance_and_minimum_required_transfer_time,
+                inputs=[
+                    "transfers_w_identified_possible_alighting_point",
+                    "params:walking_speed_meters_per_second",
+                ],
+                outputs="transfers_w_transfer_distance_and_minimum_required_transfer_time",
+                tags=tags,
+                name="get_transfer_distance_and_minimum_required_transfer_time",
+            ),
+            node(
+                func=get_alighting_probability,
+                inputs=[
+                    "transfers_w_transfer_distance_and_minimum_required_transfer_time",
+                    "params:allow_no_stops",
+                ],
+                outputs="transfers_w_alighting_probability",
+                tags=tags,
+                name="use_distance_to_choose_alighting_point",
+            ),
+            node(
+                func=select_alighting_based_on_overall_probability,
+                inputs=["transfers_w_alighting_probability"],
+                outputs="inferred_transfers_spark_df",
+                tags=tags,
+                name="select_alighting_based_on_overall_probability",
+            ),
+            node(
+                func=create_journey_ids_based_on_headway,
+                inputs=[
+                    "inferred_transfers_spark_df",
+                    "params:wait_time_multiple",
+                ],
+                outputs="hop_events_with_journey_ids_spark_df",
+                tags=tags,
+                name="create_new_journey_ids_based_on_missed_busses",
+            ),
+            node(
+                func=insert_interlining_events,
+                inputs=[
+                    "hop_events_with_journey_ids_spark_df",
+                    "stop_times_with_interlining_trip_ids_spark_df",
+                ],
+                outputs="hop_events_with_interline_events_inserted_spark_df",
+                tags=tags,
+                name="insert_interlining_events",
+            ),
+            node(
+                func=remove_impossible_journeys,
+                inputs=[
+                    "hop_events_with_interline_events_inserted_spark_df",
+                    "params:max_time_to_destination_days",
+                ],
+                outputs=[
+                    "hop_events_with_journey_ids_spark_df_w_impossible_journeys_removed",
+                    "impossible_journeys_hop_events_with_journey_ids_spark_df",
+                ],
+                tags=tags,
+                name="remove_impossible_journeys",
+            ),
+            node(
+                func=reshape_failed_journeys,
+                inputs=[
+                    "impossible_journeys_hop_events_with_journey_ids_spark_df",
+                ],
+                outputs="impossible_journeys_spark_df",
+                tags=tags,
+                name="reshape_impossible_journeys_for_output",
+            ),
+            node(
+                func=reshape_journeys,
+                inputs=[
+                    "hop_events_with_journey_ids_spark_df_w_impossible_journeys_removed",
+                ],
+                outputs="rider_events_spark_df",
+                tags=tags,
+                name="reshape_journeys_for_output",
+            ),
+            node(
+                func=get_event_type,
+                inputs=["rider_events_spark_df"],
+                outputs="rider_events_spark_df_with_event_type",
+                tags=tags,
+                name="get_event_types",
+            ),
+            node(
+                func=detect_looped_trips_according_to_threshold,
+                inputs=[
+                    "rider_events_spark_df_with_event_type",
+                    "params:loop_threshold_meters",
+                ],
+                outputs="rider_events_spark_df_with_loops_detected",
+                tags=tags,
+                name="tag_looped_trips_using_threshold",
+            ),
+            node(
+                func=remove_journeys_with_no_destination,
+                inputs=["rider_events_spark_df_with_loops_detected"],
+                outputs="rider_events_spark_df_with_destinations_confirmed",
+                tags=tags,
+                name="remove_journeys_with_no_destination",
+            ),
+            node(
+                func=validate_successful_journeys,
+                inputs=["rider_events_spark_df_with_loops_detected"],
+                outputs="validated_rider_events_spark_df",
+                tags=tags,
+                name="validate_schema_of_successful_journeys",
+            ),
+            node(
+                func=remove_implicit_interlining_events,
+                inputs=["validated_rider_events_spark_df"],
+                outputs="rider_events_without_interlining_validated_spark_df",
+                tags=tags,
+                name="validate_presence_of_interlining_events",
+            ),
+            node(
+                func=get_journey_start_dates,
+                inputs=["rider_events_without_interlining_validated_spark_df"],
+                outputs="inferred_rider_events_spark_df",
+                tags=tags,
+                name="get_journey_start_dates",
+            ),
+            node(
+                func=get_run_metrics,
+                inputs=[
+                    "inferred_rider_events_spark_df",
+                    "impossible_journeys_hop_events_with_journey_ids_spark_df",
+                ],
+                outputs="metrics",
+                tags=tags,
+                name="get_metrics_on_run",
+            ),
+        ]
+    )

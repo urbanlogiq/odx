@@ -1,0 +1,5 @@
+test_hop_prepared_year_months: [
+          [2022,02],[2022,03]
+          ]
+test_allow_no_stops: True
+test_allow_interlining: True

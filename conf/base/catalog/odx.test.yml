@@ -1,0 +1,222 @@
+#test files
+test_hop_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/hop/"
+  file_format: "parquet"
+  generic_load_args:
+    pathGlobFilter: "*.parquet.gzip"
+
+test_stop_times_avl_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/stop_times_avl/"
+  file_format: "parquet"
+  generic_load_args:
+    pathGlobFilter: "*.parquet.gzip"
+
+test_hop_spark_df_prepared_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/02_intermediate/test/hop"
+  file_format: "parquet"
+  save_args:
+    mode: "overwrite"
+    partitionBy: "SERVICE_DATE"
+
+test_stop_times_prepared_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/02_intermediate/test/stop_times_avl/stop_times/"
+  file_format: "parquet"
+  save_args:
+    mode: "overwrite"
+    partitionBy: ["SERVICE_DATE","HOUR"]
+
+test_interlining_trip_ids_prepared_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/02_intermediate/test/stop_times_avl/interlining"
+  save_args:
+    mode: "overwrite"
+    partitionBy: "service_date"
+
+test_inferred_rider_events_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/03_primary/test/rider_events_partitioned/"
+  save_args:
+    mode: "overwrite"
+    partitionBy: "JOURNEY_START_DATE"
+
+test_impossible_journeys_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/03_primary/test/failed_journeys_partitioned/"
+  save_args:
+    mode: "overwrite"
+    partitionBy: "SERVICE_DATE"
+
+test_metrics:
+  type: "tracking.MetricsDataSet"
+  filepath: "data/04_metrics/test_metrics.json"
+
+#gtfs files
+test_agency_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*agency.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_calendar_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*calendar.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_calendar_gtfs_dates_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: false
+    schema: "service_id string, date integer, exception_type integer"
+  generic_load_args:
+    pathGlobFilter: "*calendar_dates.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_fare_gtfs_attributes_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*fare_attributes.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_fare_gtfs_rules_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*fare_rules.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_feed_gtfs_info_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*feed_info.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_linked_gtfs_datasets_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*linked_datasets.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_route_gtfs_directions_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*route_directions.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_routes_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*routes.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_shapes_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*shapes.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_stop_features_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*stop_features.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_stop_times_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*stop_times.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_stops_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*stops.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_transfers_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*transfers.txt.gz"
+    basePath: "data/00_test/gtfs"
+
+test_trips_gtfs_raw_spark_df:
+  type: "kedro.extras.datasets.spark.SparkDataSet"
+  filepath: "data/00_test/gtfs"
+  file_format: "csv"
+  load_args:
+    header: true
+    inferSchema: true
+  generic_load_args:
+    pathGlobFilter: "*trips.txt.gz"
+    basePath: "data/00_test/gtfs"
