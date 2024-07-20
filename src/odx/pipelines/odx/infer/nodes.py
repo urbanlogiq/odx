@@ -3,9 +3,9 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -194,50 +194,44 @@ def get_possible_max_boarding_alternatives(
         .select("ROUTE_ID", "STOP_ID", "STOP_LAT", "STOP_LON")
         .dropDuplicates(subset=["STOP_ID"])
     )
-    max_line_stops = (
-        max_line_stops.join(
-            max_line_stops.select(
-                F.col("ROUTE_ID").alias("ROUTE_ID_ALTERNATIVE"),
-                F.col("STOP_ID").alias("STOP_ID_ALTERNATIVE"),
-                F.col("STOP_LAT").alias("STOP_LAT_ALTERNATIVE"),
-                F.col("STOP_LON").alias("STOP_LON_ALTERNATIVE"),
-            ),
-            (
-                2
-                * 6371000
-                * F.asin(  # haversine formula
-                    F.sqrt(
-                        F.sin(
+    max_line_stops = max_line_stops.join(
+        max_line_stops.select(
+            F.col("STOP_ID").alias("STOP_ID_ALTERNATIVE"),
+            F.col("STOP_LAT").alias("STOP_LAT_ALTERNATIVE"),
+            F.col("STOP_LON").alias("STOP_LON_ALTERNATIVE"),
+        ),
+        (
+            2
+            * 6371000
+            * F.asin(  # haversine formula
+                F.sqrt(
+                    F.sin(
+                        (
+                            F.radians(F.col("STOP_LAT"))
+                            - F.radians(F.col("STOP_LAT_ALTERNATIVE"))
+                        )
+                        / 2
+                    )
+                    ** 2
+                    + (
+                        F.cos(F.radians(F.col("STOP_LAT")))
+                        * F.cos(F.radians(F.col("STOP_LAT_ALTERNATIVE")))
+                        * F.sin(
                             (
-                                F.radians(F.col("STOP_LAT"))
-                                - F.radians(F.col("STOP_LAT_ALTERNATIVE"))
+                                F.radians(F.col("STOP_LON"))
+                                - F.radians("STOP_LON_ALTERNATIVE")
                             )
                             / 2
                         )
                         ** 2
-                        + (
-                            F.cos(F.radians(F.col("STOP_LAT")))
-                            * F.cos(F.radians(F.col("STOP_LAT_ALTERNATIVE")))
-                            * F.sin(
-                                (
-                                    F.radians(F.col("STOP_LON"))
-                                    - F.radians("STOP_LON_ALTERNATIVE")
-                                )
-                                / 2
-                            )
-                            ** 2
-                        )
                     )
                 )
             )
-            < threshold,
-            how="left",
         )
-        .filter(
-            (F.col("ROUTE_ID_ALTERNATIVE") == 200)
-            | (F.col("STOP_ID") == F.col("STOP_ID_ALTERNATIVE"))
-        )
-        .drop("ROUTE_ID_ALTERNATIVE")
+        < threshold,
+        how="left",
+    ).filter(
+        (F.col("ROUTE_ID") == 200) | (F.col("STOP_ID") == F.col("STOP_ID_ALTERNATIVE"))
     )  # only allow MAX lines or the stop itself as an alternative
     return max_line_stops
 
@@ -272,18 +266,16 @@ def get_possible_boarding_trip_ids(
             256,
         ),
     )
+    possible_transfer_events_spark_df = possible_transfer_events_spark_df.withColumn(
+        "STOP_ID_OLD", F.col("STOP_ID")
+    )  # TODO: Remove afterwards
     # get boarding taps for max lines
     max_line_boarding_points = possible_transfer_events_spark_df.filter(
         F.col("LINE_ID") == 200
     )
     # insert alternative boarding locations
     max_line_boarding_points = max_line_boarding_points.join(
-        max_line_boarding_alternatives.select(
-            *[
-                F.col(col).alias(f"{col.upper()}")
-                for col in max_line_boarding_alternatives.columns
-            ]
-        ),
+        max_line_boarding_alternatives,
         on="STOP_ID",
         how="left",
     )
@@ -322,13 +314,7 @@ def get_possible_boarding_trip_ids(
         "MEAN_BOARDING_INTERVAL_SECONDS",
         "TRIP_ID",
         "HOUR",
-        F.col("DIRECTION_ID").alias("BOARDING_DIRECTION_ID"),
-    )
-    arrival_window = Window.partitionBy(F.col("UNIQUE_ROW_ID")).orderBy(
-        F.col("ARRIVE_DATETIME").desc()
-    )
-    departure_window = Window.partitionBy(F.col("UNIQUE_ROW_ID")).orderBy(
-        F.col("DEPARTURE_DATETIME").asc()
+        F.col("DIRECTION_ID").alias("STOP_DIRECTION_ID"),
     )
     max_boardings = possible_boarding_points.filter(F.col("LINE_ID") == 200)
     non_max_boardings = possible_boarding_points.filter(F.col("LINE_ID") != 200)
@@ -360,16 +346,27 @@ def get_possible_boarding_trip_ids(
         ),
         how="left",
     ).drop("STOP_STOP_ID", "STOP_LINE_ID", "STOP_SERVICE_DATE")
+    max_departure_window = Window.partitionBy(
+        F.col("UNIQUE_ROW_ID"),
+        F.col("STOP_LINE_ID_OLD"),
+        F.col("STOP_DIRECTION_ID"),
+    ).orderBy(F.col("DEPARTURE_DATETIME").asc())
+    # We differentiate here because we added in alternative boarding locations, which means alternative lines and directions as well
     max_possible_boarding_points = (
         max_possible_boarding_points.withColumn(
-            "ROW_ID", F.row_number().over(departure_window)
+            "ROW_ID", F.row_number().over(max_departure_window)
         )
-        .filter(F.col("ROW_ID") <= 3)  # only select three options
+        .filter(
+            F.col("ROW_ID") <= 3
+        )  # only select three options per stop time line id and direction id.
         .drop("ROW_ID")
+    )
+    non_max_arrival_window = Window.partitionBy(F.col("UNIQUE_ROW_ID")).orderBy(
+        F.col("ARRIVE_DATETIME").desc()
     )
     non_max_possible_boardings = (
         non_max_possible_boardings.withColumn(
-            "ROW_ID", F.row_number().over(arrival_window)
+            "ROW_ID", F.row_number().over(non_max_arrival_window)
         )
         .filter(F.col("ROW_ID") <= 3)  # only select three options
         .drop("ROW_ID")
@@ -460,18 +457,20 @@ def get_possible_alighting_points(
             .drop("TRIP_ID")
             .withColumnRenamed("INTERLINING_TRIP_ID", "TRIP_ID")
         )
-    stop_times_spark_df = stop_times_spark_df_w_interlining_information_spark_df.select(
-        F.col("SERVICE_DATE").alias("STOP_TIME_SERVICE_DATE"),
-        F.col("ROUTE_ID").alias("ALIGHTING_LINE_ID"),
-        F.col("ROUTE_ID_OLD").alias("ALIGHTING_LINE_ID_OLD"),
-        F.col("TRIP_ID").alias("STOP_TIME_TRIP_ID"),
-        F.col("IS_INTERLINING_TRIP"),
-        F.col("STOP_ID").alias("ALIGHTING_STOP_ID"),
-        F.col("ARRIVE_DATETIME").alias("ALIGHTING_ARRIVE_DATETIME"),
-        F.col("DEPARTURE_DATETIME").alias("ALIGHTING_DEPARTURE_DATETIME"),
-        F.col("STOP_LAT").alias("ALIGHTING_STOP_LAT"),
-        F.col("STOP_LON").alias("ALIGHTING_STOP_LON"),
-    )
+        stop_times_spark_df = (
+            stop_times_spark_df_w_interlining_information_spark_df.select(
+                F.col("SERVICE_DATE").alias("STOP_TIME_SERVICE_DATE"),
+                F.col("ROUTE_ID").alias("ALIGHTING_LINE_ID"),
+                F.col("ROUTE_ID_OLD").alias("ALIGHTING_LINE_ID_OLD"),
+                F.col("TRIP_ID").alias("STOP_TIME_TRIP_ID"),
+                F.col("IS_INTERLINING_TRIP"),
+                F.col("STOP_ID").alias("ALIGHTING_STOP_ID"),
+                F.col("ARRIVE_DATETIME").alias("ALIGHTING_ARRIVE_DATETIME"),
+                F.col("DEPARTURE_DATETIME").alias("ALIGHTING_DEPARTURE_DATETIME"),
+                F.col("STOP_LAT").alias("ALIGHTING_STOP_LAT"),
+                F.col("STOP_LON").alias("ALIGHTING_STOP_LON"),
+            )
+        )
     possible_transfer_events_spark_df = (
         transfer_events_with_trip_id_spark_df.join(
             stop_times_spark_df,
@@ -540,17 +539,17 @@ def get_transfer_distance_and_minimum_required_transfer_time(
                         F.sin(
                             (
                                 F.radians(F.col("ALIGHTING_STOP_LAT"))
-                                - F.radians(F.col("STOP_LAT_next"))
+                                - F.radians(F.col("STOP_LAT_NEXT"))
                             )
                             / 2
                         )
                         ** 2
                         + (
                             F.cos(F.radians(F.col("ALIGHTING_STOP_LAT")))
-                            * F.cos(F.radians(F.col("STOP_LAT_next")))
+                            * F.cos(F.radians(F.col("STOP_LAT_NEXT")))
                             * F.sin(
                                 (
-                                    F.radians(F.col("STOP_LON_next"))
+                                    F.radians(F.col("STOP_LON_NEXT"))
                                     - F.radians("ALIGHTING_STOP_LON")
                                 )
                                 / 2
@@ -784,26 +783,121 @@ def select_alighting_based_on_overall_probability(
         SparkDF: SparkDF with alighting location and time selected based on overall probability.
     """
     unique_row_window = Window.partitionBy(F.col("UNIQUE_ROW_ID")).orderBy(
-        F.col("CONFIDENCE").desc(), F.col("TRAVEL_TIME_SECONDS").asc()
+        F.col("TRAVEL_TIME_SECONDS").asc()
     )
-    within_trip_window = Window.partitionBy(
-        F.col("UNIQUE_ROW_ID"), F.col("TRIP_ID")
+    within_route_and_direction_window = Window.partitionBy(
+        F.col("UNIQUE_ROW_ID"), F.col("STOP_LINE_ID_OLD"), F.col("STOP_DIRECTION_ID")
     ).orderBy(F.col("TRANSFER_DISTANCE_METERS").desc())
-
+    ### include route selection
     possible_transfer_events_spark_df = possible_transfer_events_spark_df.withColumn(
-        "MIN_TRANSFER_DISTANCE_METERS",
-        F.min(F.col("TRANSFER_DISTANCE_METERS")).over(
-            within_trip_window.rowsBetween(
+        "MIN_ROUTE_AND_DIRECTION_TRAVEL_TIME",
+        F.min(F.col("MIN_TRAVEL_TIME_SECONDS")).over(
+            within_route_and_direction_window.rowsBetween(
                 Window.unboundedPreceding, Window.unboundedFollowing
             )
         ),
     )
+    possible_transfer_events_spark_df = possible_transfer_events_spark_df.withColumn(
+        "MIN_TRAVEL_TIME_ALL_TRIPS",
+        F.min(F.col("MIN_TRAVEL_TIME_SECONDS")).over(
+            unique_row_window.rowsBetween(
+                Window.unboundedPreceding, Window.unboundedFollowing
+            )
+        ),
+    )
+    possible_transfer_events_spark_df = possible_transfer_events_spark_df.withColumn(
+        "ROUTE_AND_DIRECTION_UTILITY",
+        F.exp(
+            F.col("MIN_TRAVEL_TIME_ALL_TRIPS")
+            / F.col("MIN_ROUTE_AND_DIRECTION_TRAVEL_TIME")
+        ),
+    )
+    sum_trip_utilities = (
+        possible_transfer_events_spark_df.select(
+            "UNIQUE_ROW_ID", "STOP_DIRECTION_ID", "STOP_LINE_ID_OLD","ROUTE_AND_DIRECTION_UTILITY"
+        )
+        .dropDuplicates(["UNIQUE_ROW_ID", "STOP_LINE_ID_OLD","STOP_DIRECTION_ID"])
+        .groupBy("UNIQUE_ROW_ID")
+        .agg(
+            F.sum(F.col("ROUTE_AND_DIRECTION_UTILITY")).alias(
+                "SUM_ROUTE_AND_DIRECTION_UTILITIES"
+            )
+        )
+    )
+    possible_transfer_events_spark_df = possible_transfer_events_spark_df.join(
+        sum_trip_utilities, on=["UNIQUE_ROW_ID"], how="left"
+    )
+    possible_transfer_events_spark_df = possible_transfer_events_spark_df.withColumn(
+        "ROUTE_AND_DIRECTION_SELECTION_PROBABILITY",
+        F.col("ROUTE_AND_DIRECTION_UTILITY")
+        / F.col("SUM_ROUTE_AND_DIRECTION_UTILITIES"),
+    )
+    ####
+    # write out debugging###
+    import pdb
+    pdb.set_trace()
+    debugging_ids = [
+        "5ef75b4e-b574-338a-3a4b-66b9bb31fa3a",
+        "2aab14db-46fe-797a-fdb3-61ec74610c27",
+        "4ff7679a-34c5-b9a3-8266-7ebd8db26b59",
+        "9cfcf7ec-1589-d4d8-e179-b8ccb34e3cc2",
+        "5ef75b4e-b574-338a-3a4b-66b9bb31fa3a",
+        "c95e35d1-1662-0239-7c16-0d44e68dd7e5",
+        "43ec4aab-6737-1096-f808-4b466050ab4d",
+        "e7854e5b-c2cc-c5c8-96c6-5daed19620bb",
+    ]
+    debugging_dates = [
+        "2024-04-03",
+        "2024-04-04",
+        "2024-04-05",
+        "2024-04-06",
+        "2024-04-07",
+    ]
+    import pdb
+
+    pdb.set_trace()
+    possible_transfer_events_spark_df.filter(
+        F.col("SERVICE_DATE").isin(debugging_dates)
+        & F.col("CARD_ID").isin(debugging_ids)
+    ).select(
+        "CARD_ID",
+        "DATETIME",
+        "LINE_ID",
+        "STOP_ID",
+        "STOP_ID_NEXT",
+        "ROUTE_AND_DIRECTION_UTILITY",
+        "ROUTE_AND_DIRECTION_SELECTION_PROBABILITY",
+        "ALIGHTING_PROBABILITY",
+        "BOARDING_PROBABILITY",
+        "ALIGHTING_STOP_ID",
+        "ALIGHTING_LINE_ID",
+        "STOP_ID_OLD",
+        "STOP_LINE_ID_OLD",
+        "DIRECTION_ID",
+    ).coalesce(
+        1
+    ).write.mode(
+        "overwrite"
+    ).option(
+        "header", True
+    ).csv(
+        "debugging_data/amended_probabilities"
+    )
+    import pdb
+
+    pdb.set_trace()
+    ####
+    confidence_selection_window = Window.partitionBy("UNIQUE_ROW_ID").orderBy(
+        F.col("CONFIDENCE").desc()
+    )
     possible_transfer_events_spark_df = (
         possible_transfer_events_spark_df.withColumn(
             "CONFIDENCE",
-            F.col("ALIGHTING_PROBABILITY") * F.col("BOARDING_PROBABILITY"),
+            F.col("ALIGHTING_PROBABILITY")
+            * F.col("BOARDING_PROBABILITY")
+            * F.col("ROUTE_AND_DIRECTION_SELECTION_PROBABILITY"),
         )
-        .withColumn("ROW_ID", F.row_number().over(unique_row_window))
+        .withColumn("ROW_ID", F.row_number().over(confidence_selection_window))
         .filter(F.col("ROW_ID") == 1)
         .drop("ROW_ID")
     )

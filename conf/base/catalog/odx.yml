@@ -71,7 +71,7 @@ agency_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*agency.txt.gz"
+    pathGlobFilter: "*agency.txt"
     basePath: "data/01_raw/gtfs"
 
 calendar_gtfs_raw_spark_df:
@@ -82,7 +82,7 @@ calendar_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*calendar.txt.gz"
+    pathGlobFilter: "*calendar.txt"
     basePath: "data/01_raw/gtfs"
 
 calendar_gtfs_dates_raw_spark_df:
@@ -94,7 +94,7 @@ calendar_gtfs_dates_raw_spark_df:
     inferSchema: false
     schema: "service_id string, date integer, exception_type integer"
   generic_load_args:
-    pathGlobFilter: "*calendar_dates.txt.gz"
+    pathGlobFilter: "*calendar_dates.txt"
     basePath: "data/01_raw/gtfs"
 
 fare_gtfs_attributes_raw_spark_df:
@@ -105,7 +105,7 @@ fare_gtfs_attributes_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*fare_attributes.txt.gz"
+    pathGlobFilter: "*fare_attributes.txt"
     basePath: "data/01_raw/gtfs"
 
 fare_gtfs_rules_raw_spark_df:
@@ -116,7 +116,7 @@ fare_gtfs_rules_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*fare_rules.txt.gz"
+    pathGlobFilter: "*fare_rules.txt"
     basePath: "data/01_raw/gtfs"
 
 feed_gtfs_info_raw_spark_df:
@@ -127,7 +127,7 @@ feed_gtfs_info_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*feed_info.txt.gz"
+    pathGlobFilter: "*feed_info.txt"
     basePath: "data/01_raw/gtfs"
 
 linked_gtfs_datasets_raw_spark_df:
@@ -138,7 +138,7 @@ linked_gtfs_datasets_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*linked_datasets.txt.gz"
+    pathGlobFilter: "*linked_datasets.txt"
     basePath: "data/01_raw/gtfs"
 
 route_gtfs_directions_raw_spark_df:
@@ -149,7 +149,7 @@ route_gtfs_directions_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*route_directions.txt.gz"
+    pathGlobFilter: "*route_directions.txt"
     basePath: "data/01_raw/gtfs"
 
 routes_gtfs_raw_spark_df:
@@ -160,7 +160,7 @@ routes_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*routes.txt.gz"
+    pathGlobFilter: "*routes.txt"
     basePath: "data/01_raw/gtfs"
 
 shapes_gtfs_raw_spark_df:
@@ -171,7 +171,7 @@ shapes_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*shapes.txt.gz"
+    pathGlobFilter: "*shapes.txt"
     basePath: "data/01_raw/gtfs"
 
 stop_features_gtfs_raw_spark_df:
@@ -182,7 +182,7 @@ stop_features_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*stop_features.txt.gz"
+    pathGlobFilter: "*stop_features.txt"
     basePath: "data/01_raw/gtfs"
 
 stop_times_gtfs_raw_spark_df:
@@ -193,7 +193,7 @@ stop_times_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*stop_times.txt.gz"
+    pathGlobFilter: "*stop_times.txt"
     basePath: "data/01_raw/gtfs"
 
 stops_gtfs_raw_spark_df:
@@ -204,7 +204,7 @@ stops_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*stops.txt.gz"
+    pathGlobFilter: "*stops.txt"
     basePath: "data/01_raw/gtfs"
 
 transfers_gtfs_raw_spark_df:
@@ -215,7 +215,7 @@ transfers_gtfs_raw_spark_df:
     header: true
     inferSchema: true
   generic_load_args:
-    pathGlobFilter: "*transfers.txt.gz"
+    pathGlobFilter: "*transfers.txt"
     basePath: "data/01_raw/gtfs"
 
 trips_gtfs_raw_spark_df:
@@ -224,7 +224,8 @@ trips_gtfs_raw_spark_df:
   file_format: "csv"
   load_args:
     header: true
-    inferSchema: true
+    inferSchema: false
+    schema: "route_id string, service_id integer, trip_id integer, trip_headsign string, trip_short_name string, direction_id integer, block_id integer, shape_id integer, trip_type integer, wheelchair_accessible integer, bikes_allowed integer"
   generic_load_args:
-    pathGlobFilter: "*trips.txt.gz"
+    pathGlobFilter: "*trips.txt"
     basePath: "data/01_raw/gtfs"
