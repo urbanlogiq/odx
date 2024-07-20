@@ -357,8 +357,8 @@ def get_possible_boarding_trip_ids(
             "ROW_ID", F.row_number().over(max_departure_window)
         )
         .filter(
-            F.col("ROW_ID") <= 3
-        )  # only select three options per stop time line id and direction id.
+            F.col("ROW_ID") <= 2
+        )  # only select two options per stop time line id and direction id. Either you take it (1st option) or you miss the first and take the second
         .drop("ROW_ID")
     )
     non_max_arrival_window = Window.partitionBy(F.col("UNIQUE_ROW_ID")).orderBy(
@@ -368,7 +368,7 @@ def get_possible_boarding_trip_ids(
         non_max_possible_boardings.withColumn(
             "ROW_ID", F.row_number().over(non_max_arrival_window)
         )
-        .filter(F.col("ROW_ID") <= 3)  # only select three options
+        .filter(F.col("ROW_ID") <= 3)  # only select three options to handle bus bunching
         .drop("ROW_ID")
     )
     max_possible_boardings = max_possible_boarding_points.withColumn(
@@ -401,9 +401,9 @@ def get_possible_boarding_trip_ids(
         ),
     )
     possible_boardings = max_possible_boardings.unionByName(non_max_possible_boardings)
-    unique_row_window = Window.partitionBy(F.col("UNIQUE_ROW_ID")).orderBy(
-        F.col("BOARDING_PROBABILITY")
-    )
+    unique_row_window = Window.partitionBy(
+        F.col("UNIQUE_ROW_ID"), F.col("STOP_LINE_ID_OLD"), F.col("STOP_DIRECTION_ID")
+    ).orderBy(F.col("BOARDING_PROBABILITY").asc())#normalize along a line and direction
     return possible_boardings.withColumn(
         "BOARDING_PROBABILITY",
         F.col("BOARDING_PROBABILITY")
@@ -814,9 +814,12 @@ def select_alighting_based_on_overall_probability(
     )
     sum_trip_utilities = (
         possible_transfer_events_spark_df.select(
-            "UNIQUE_ROW_ID", "STOP_DIRECTION_ID", "STOP_LINE_ID_OLD","ROUTE_AND_DIRECTION_UTILITY"
+            "UNIQUE_ROW_ID",
+            "STOP_DIRECTION_ID",
+            "STOP_LINE_ID_OLD",
+            "ROUTE_AND_DIRECTION_UTILITY",
         )
-        .dropDuplicates(["UNIQUE_ROW_ID", "STOP_LINE_ID_OLD","STOP_DIRECTION_ID"])
+        .dropDuplicates(["UNIQUE_ROW_ID", "STOP_LINE_ID_OLD", "STOP_DIRECTION_ID"])
         .groupBy("UNIQUE_ROW_ID")
         .agg(
             F.sum(F.col("ROUTE_AND_DIRECTION_UTILITY")).alias(
@@ -835,6 +838,7 @@ def select_alighting_based_on_overall_probability(
     ####
     # write out debugging###
     import pdb
+
     pdb.set_trace()
     debugging_ids = [
         "5ef75b4e-b574-338a-3a4b-66b9bb31fa3a",
