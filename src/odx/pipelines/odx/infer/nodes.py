@@ -344,17 +344,16 @@ def get_max_possible_boarding_trip_ids(
     ).drop("STOP_STOP_ID", "STOP_LINE_ID", "STOP_SERVICE_DATE")
     max_departure_window = Window.partitionBy(
         F.col("UNIQUE_ROW_ID"),
-        F.col("STOP_LINE_ID_OLD"),
+        F.col("STOP_LINE_ID_OLD"),#evaluate boarding probability against routes and directions
         F.col("STOP_DIRECTION_ID"),
     ).orderBy(F.col("DEPARTURE_DATETIME").asc())
-    # We differentiate here because we added in alternative boarding locations, which means alternative lines and directions as well
     max_possible_boarding_points = (
         max_possible_boarding_points.withColumn(
             "ROW_ID", F.row_number().over(max_departure_window)
         )
         .filter(
             F.col("ROW_ID") <= 2
-        )  # only select two options per stop time line id and direction id. Either you take it (1st option) or you miss the first and take the second
+        )  # only select two options per line id and direction id. Either you take the first option or you miss the first and take the second
         .drop("ROW_ID")
     )
     max_possible_boardings = max_possible_boarding_points.withColumn(
