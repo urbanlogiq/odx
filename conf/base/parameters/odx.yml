@@ -70,7 +70,7 @@ stop_times_table_columns: [ #columns to use from the stop events
 ]
 
 #params for inference
-max_line_stop_alternative_distance_threshold: 61 #some riders tap at a location but board at another (especially for MAX lines). This threshold allows the algo to look within X meters of the tap for an alternative boarding location.
+max_line_stop_alternative_distance_threshold: 153 #some riders tap at a location but board at another (especially for MAX lines). This threshold allows the algo to look within X meters of the tap for an alternative boarding location.
 max_time_to_destination_days: 7 #max time between an observation and the inferred destination observation. If it's more than the threshold we tag the journey as incomplete (remove the destination)
 loop_threshold_meters: 151 # 500ft in meters
 walking_speed_meters_per_second: 1.5 #walking speed of average human
