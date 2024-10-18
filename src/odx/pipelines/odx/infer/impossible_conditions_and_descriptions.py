@@ -3,9 +3,9 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,6 +14,7 @@
 
 from pyspark.sql import functions as F
 from typing import List
+from .utils import haversine_meters
 
 
 def get_impossible_conditions_and_descriptions(
@@ -147,4 +148,20 @@ def get_impossible_conditions_and_descriptions(
             "NO BOARDING INTERVAL BOARDING TAP",
         ),
         (F.col("STOP_LINE_ID_OLD").isNull(), "OLD LINE ID IS NULL"),
+        (
+            (
+                haversine_meters(
+                    F.col("STOP_LAT"),
+                    F.col("STOP_LON"),
+                    F.col("ALIGHTING_STOP_LAT"),
+                    F.col("ALIGHTING_STOP_LON"),
+                )
+                / (
+                    F.col("ALIGHTING_ARRIVE_DATETIME").cast("long")
+                    - F.col("ARRIVE_DATETIME").cast("long")
+                )
+            )
+            > F.lit(30),
+            "VEHICLE ACCOMPLISHED RIDE FASTER THAN 75 MPH",
+        ),
     ]

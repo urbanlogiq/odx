@@ -1,6 +1,6 @@
 spark.master: local[*]
 spark.appName: ODXInference
-spark.executor.memory: 10g
+spark.executor.memory: 5g
 spark.driver.memory: 5g
 spark.driver.maxResultSize: 3g
 spark.scheduler.mode: FAIR

@@ -3,9 +3,9 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -125,7 +125,7 @@ def create_datetime_column(spark_df: SparkDF, column_to_parse: str) -> SparkDF:
 
 
 def create_date_column(
-    spark_df: SparkDF, column_to_parse: str = "DATETIME", raw_date_format: str = None
+    spark_df: SparkDF, column_to_parse: str = "DATETIME", raw_date_format: str = ""
 ) -> SparkDF:
     """Create a date column from the column to parse.
 
@@ -158,6 +158,36 @@ def remove_unknown_stops(spark_df: SparkDF) -> SparkDF:
         SparkDF: SparkDF where the STOP_ID column has been filtered to remove values less than 0.
     """
     return spark_df.filter(F.col("STOP_ID") != -1)
+
+
+def remove_duplicate_taps(spark_df: SparkDF, threshold_seconds: int) -> SparkDF:
+    """Removes duplicate taps according to a threshold in time. Retains the latest tap.
+
+    Args:
+        spark_df (SparkDF): SparkDF representing taps.
+
+    Returns:
+        SparkDF: SparkDF with duplicate taps removed according to the threshold.
+    """
+    tap_window = Window.partitionBy("CARD_ID").orderBy(F.col("DATETIME").asc())
+    spark_df = spark_df.withColumn(
+        "DATETIME_NEXT", F.lead(F.col("DATETIME"), 1).over(tap_window)
+    )
+    # find duplicate taps
+    spark_df = spark_df.withColumn(
+        "IS_DUPLICATE_TAP",
+        F.when(
+            F.col("DATETIME_NEXT").isNotNull()
+            & (
+                (F.col("DATETIME_NEXT").cast("int") - F.col("DATETIME").cast("int"))
+                < threshold_seconds
+            ),
+            F.lit(1),
+        ).otherwise(F.lit(0)),
+    )
+    return spark_df.filter(F.col("IS_DUPLICATE_TAP") == 0).drop(
+        "IS_DUPLICATE_TAP", "DATETIME_NEXT"
+    )
 
 
 def fill_transaction_ticket_description_nulls_with_unknown(
@@ -278,7 +308,7 @@ def add_source_column(spark_df: SparkDF, source_value: str) -> SparkDF:
 def get_relevant_stop_times(
     hop_events_spark_df: SparkDF,
     stop_times_avl_spark_df: SparkDF,
-) -> Tuple[SparkDF, SparkDF]:
+) -> SparkDF:
     """Only consider service dates that we have hop data for.
 
     Args:
