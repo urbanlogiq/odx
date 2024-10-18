@@ -2,19 +2,14 @@
 hop_raw_datetime_column: "TAP_TIME" #the column containing the raw datetime strings for the taps in the hop data
 unique_rider_column: "CARD_ID" #the column identifying unique tickets
 hop_line_id_column: "LINE_ID"
-duplicate_tap_threshold_seconds: 20 #number of seconds under which two subsequent taps will result in a duplicate.
+duplicate_tap_threshold_seconds: 20
 
-hop_no_nulls_columns: [
-  "CARD_ID",
-  "TAP_TIME",
-  "LINE_ID",
-  "STOP_ID"
-]
-ignored_service_names: [ #list of operators to ignore. Any journey including these services will be removed. Filters on the "OPERATEDBY_DESCRIPTION" column
-  "CTRAN", "PSC", "WES"
-]
+hop_no_nulls_columns: ["CARD_ID", "TAP_TIME", "LINE_ID", "STOP_ID"]
+ignored_service_names: #list of operators to ignore. Any journey including these services will be removed. Filters on the "OPERATEDBY_DESCRIPTION" column
+  ["CTRAN", "PSC", "WES"]
 
-line_id_mappings: { #mainly exists because StreetCar and MAX lines aren't differentiated within the HOP data, but are differentiated in the GTFS data
+line_id_mappings: #mainly exists because StreetCar and MAX lines aren't differentiated within the HOP data, but are differentiated in the GTFS data
+  {
     290: 200, #200 is generic MAX line id in HOP data
     90: 200,
     100: 200,
@@ -22,27 +17,27 @@ line_id_mappings: { #mainly exists because StreetCar and MAX lines aren't differ
     203: 200,
     194: 193, # 193 is the generic streetcar line id in the HOP data
     195: 193,
-    196: 193
-}
+    196: 193,
+  }
 
-non_max_allowed_alternatives: [ #some lines are tagged as MAX in the HOP data but aren't tagged as such in the GTFS data. This allows you to search for MAX lines near these stops in the GTFS data
-  7999
-]
+non_max_allowed_alternatives: #some lines are tagged as MAX in the HOP data but aren't tagged as such in the GTFS data. This allows you to search for MAX lines near these stops in the GTFS data
+  [7999]
 
-transfer_table_columns: [ #columns to retain in the transfer table
-   "DATETIME",
-   "SERVICE_DATE",
-   "LINE_ID",
-   "STOP_ID",
-   "STOP_LAT",
-   "STOP_LON",
-   "DIRECTION_ID",
-   "GEOLOCATIONLATITUDE",
-   "GEOLOCATIONLONGITUDE",
-   "TRANSACTION_TICKET_DESCRIPTION",
-   "FARE_CATEGORY_DESCRIPTION",
-   "IS_UNWANTED_OPERATOR"
-]
+transfer_table_columns: #columns to retain in the transfer table
+  [
+    "DATETIME",
+    "SERVICE_DATE",
+    "LINE_ID",
+    "STOP_ID",
+    "STOP_LAT",
+    "STOP_LON",
+    "DIRECTION_ID",
+    "GEOLOCATIONLATITUDE",
+    "GEOLOCATIONLONGITUDE",
+    "TRANSACTION_TICKET_DESCRIPTION",
+    "FARE_CATEGORY_DESCRIPTION",
+    "IS_UNWANTED_OPERATOR",
+  ]
 
 #gtfs related parameters
 static_gtfs_source_value: "GTFS_STATIC"
@@ -51,28 +46,29 @@ gtfs_line_id_column: "ROUTE_ID"
 
 #avl stop events related parameters
 avl_source_value: "AVL_STOP_EVENTS"
-stop_times_repartition_columns: ["SERVICE_DATE","HOUR"]
-stop_times_table_columns: [ #columns to use from the stop events
-  "DATE",
-  "TRIP_ID",
-  "DIRECTION_ID",
-  "ROUTE_ID",
-  "ROUTE_ID_OLD",
-  "SERVICE_ID",
-  "STOP_ID",
-  "ARRIVAL_TIME",
-  "DEPARTURE_TIME",
-  "STOP_LAT",
-  "STOP_LON",
-  "ARRIVAL_DATETIME",
-  "DEPARTURE_DATETIME",
-  "SOURCE"
-]
+stop_times_repartition_columns: ["SERVICE_DATE", "HOUR"]
+stop_times_table_columns: #columns to use from the stop events
+  [
+    "DATE",
+    "TRIP_ID",
+    "DIRECTION_ID",
+    "ROUTE_ID",
+    "ROUTE_ID_OLD",
+    "SERVICE_ID",
+    "STOP_ID",
+    "ARRIVAL_TIME",
+    "DEPARTURE_TIME",
+    "STOP_LAT",
+    "STOP_LON",
+    "ARRIVAL_DATETIME",
+    "DEPARTURE_DATETIME",
+    "SOURCE",
+  ]
 
 #params for inference
-max_line_stop_alternative_distance_threshold: 153 #some riders tap at a location but board at another (especially for MAX lines). This threshold allows the algo to look within X meters of the tap for an alternative boarding location.
+max_line_stop_alternative_distance_threshold: 153 #500 ft in meters #some riders tap at a location but board at another (especially for MAX lines). This threshold allows the algo to look within X meters of the tap for an alternative boarding location.
 max_time_to_destination_days: 7 #max time between an observation and the inferred destination observation. If it's more than the threshold we tag the journey as incomplete (remove the destination)
-loop_threshold_meters: 151 # 500ft in meters
+loop_threshold_meters: 61 #200 ft in meters
 walking_speed_meters_per_second: 1.5 #walking speed of average human
 wait_time_multiple: 15 #number of minutes that are considered "painful" to wait
 hop_prepared_datetime_column: "SERVICE_DATE"
