@@ -29,10 +29,13 @@ pathspec = "0.9.0"
 pandas = "2.0.3"
 pyarrow = "^13.0.0"
 aiohttp = "^3.9.1"
+seaborn = "^0.13.2"
+scipy = "1.9"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.5.1"
 black = "^23.9.1"
+ipykernel = "^6.29.5"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

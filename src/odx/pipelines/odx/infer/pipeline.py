@@ -3,9 +3,9 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,11 +20,14 @@ from .nodes import (
     build_possible_transfers,
     merge_stop_locations_onto_taps,
     get_possible_max_boarding_alternatives,
-    get_possible_boarding_trip_ids,
+    split_bus_from_max_lines,
+    get_max_possible_boarding_trip_ids,
+    get_bus_possible_boarding_trip_ids,
     get_possible_alighting_points,
     get_transfer_distance_and_minimum_required_transfer_time,
     select_alighting_based_on_overall_probability,
     get_alighting_probability,
+    calculate_validity_score,
     remove_impossible_journeys,
     reshape_journeys,
     reshape_failed_journeys,
@@ -107,20 +110,41 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="get_stop_alternatives_for_max_lines",
             ),
             node(
-                func=get_possible_boarding_trip_ids,
+                func=split_bus_from_max_lines,
+                inputs=["identified_possible_transfers_spark_df"],
+                outputs=[
+                    "max_possible_transfers_spark_df",
+                    "bus_possible_transfers_spark_df",
+                ],
+                tags=tags,
+                name="split_bus_taps_from_max_taps",
+            ),
+            node(
+                func=get_max_possible_boarding_trip_ids,
                 inputs=[
-                    "identified_possible_transfers_spark_df",
+                    "max_possible_transfers_spark_df",
                     "time_localized_stop_times_prepared_spark_df",
                     "max_line_stop_alternatives_spark_df",
                 ],
-                outputs="transfers_w_identified_possible_boarding_trip_ids",
+                outputs="max_transfers_w_identified_possible_boarding_trip_ids",
                 tags=tags,
-                name="merge_stop_times_onto_transfers",
+                name="get_possible_max_boarding_trips",
+            ),
+            node(
+                func=get_bus_possible_boarding_trip_ids,
+                inputs=[
+                    "bus_possible_transfers_spark_df",
+                    "time_localized_stop_times_prepared_spark_df",
+                ],
+                outputs="bus_transfers_w_identified_possible_boarding_trip_ids",
+                tags=tags,
+                name="get_possible_bus_boarding_trips",
             ),
             node(
                 func=get_possible_alighting_points,
                 inputs=[
-                    "transfers_w_identified_possible_boarding_trip_ids",
+                    "max_transfers_w_identified_possible_boarding_trip_ids",
+                    "bus_transfers_w_identified_possible_boarding_trip_ids",
                     "time_localized_stop_times_prepared_spark_df",
                     "interlining_trip_ids_prepared_spark_df",
                     "params:allow_interlining",
@@ -202,9 +226,16 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="reshape_impossible_journeys_for_output",
             ),
             node(
+                func = calculate_validity_score,
+                inputs = ["hop_events_with_journey_ids_spark_df_w_impossible_journeys_removed"],
+                outputs = "hop_events_with_validity_score_calculated",
+                tags =tags,
+                name = "calculate_validity_score"
+            ),
+            node(
                 func=reshape_journeys,
                 inputs=[
-                    "hop_events_with_journey_ids_spark_df_w_impossible_journeys_removed",
+                    "hop_events_with_validity_score_calculated",
                 ],
                 outputs="rider_events_spark_df",
                 tags=tags,

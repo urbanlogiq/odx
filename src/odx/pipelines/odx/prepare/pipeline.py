@@ -3,9 +3,9 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,6 +21,7 @@ from .nodes import (
     fill_transaction_ticket_description_nulls_with_unknown,
     map_line_ids,
     create_datetime_column,
+    remove_duplicate_taps,
     create_date_column,
     identify_unwanted_operators,
     remove_unknown_stops,
@@ -119,8 +120,18 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="create_datetime_column",
             ),
             node(
+                func=remove_duplicate_taps,
+                inputs=[
+                    "hop_spark_df_with_datetime",
+                    "params:duplicate_tap_threshold_seconds",
+                ],
+                outputs="hop_spark_df_with_duplicate_taps_removed",
+                tags=tags,
+                name="remove_duplicate_taps",
+            ),
+            node(
                 func=create_date_column,
-                inputs=["hop_spark_df_with_datetime"],
+                inputs=["hop_spark_df_with_duplicate_taps_removed"],
                 outputs="hop_spark_df_with_date",
                 tags=tags,
                 name="create_date_column_for_hop_taps",
