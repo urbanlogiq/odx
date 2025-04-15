@@ -3,7 +3,6 @@
 # Documentation for this file format can be found in "The Data Catalog"
 # Link: https://kedro.readthedocs.io/en/stable/05_data/01_data_catalog.html
 
-
 #trimet sourced files
 hop_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
@@ -40,7 +39,7 @@ stop_times_prepared_spark_df:
   file_format: "parquet"
   save_args:
     mode: "overwrite"
-    partitionBy: ["SERVICE_DATE","HOUR"]
+    partitionBy: ["SERVICE_DATE", "HOUR"]
 
 inferred_rider_events_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
@@ -61,171 +60,123 @@ impossible_journeys_spark_df:
     mode: "overwrite"
     partitionBy: "SERVICE_DATE"
 
-
 #gtfs files
 agency_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*agency.txt"
+    pathGlobFilter: "*agency.parquet"
     basePath: "data/01_raw/gtfs"
 
 calendar_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*calendar.txt"
+    pathGlobFilter: "*calendar.parquet"
     basePath: "data/01_raw/gtfs"
 
 calendar_gtfs_dates_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: false
-    schema: "service_id string, date integer, exception_type integer"
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*calendar_dates.txt"
+    pathGlobFilter: "*calendar_dates.parquet"
     basePath: "data/01_raw/gtfs"
 
 fare_gtfs_attributes_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*fare_attributes.txt"
+    pathGlobFilter: "*fare_attributes.parquet"
     basePath: "data/01_raw/gtfs"
 
 fare_gtfs_rules_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*fare_rules.txt"
+    pathGlobFilter: "*fare_rules.parquet"
     basePath: "data/01_raw/gtfs"
 
 feed_gtfs_info_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*feed_info.txt"
+    pathGlobFilter: "*feed_info.parquet"
     basePath: "data/01_raw/gtfs"
 
 linked_gtfs_datasets_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*linked_datasets.txt"
+    pathGlobFilter: "*linked_datasets.parquet"
     basePath: "data/01_raw/gtfs"
 
 route_gtfs_directions_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*route_directions.txt"
+    pathGlobFilter: "*route_directions.parquet"
     basePath: "data/01_raw/gtfs"
 
 routes_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*routes.txt"
+    pathGlobFilter: "*routes.parquet"
     basePath: "data/01_raw/gtfs"
 
 shapes_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*shapes.txt"
+    pathGlobFilter: "*shapes.parquet"
     basePath: "data/01_raw/gtfs"
 
 stop_features_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*stop_features.txt"
+    pathGlobFilter: "*stop_features.parquet"
     basePath: "data/01_raw/gtfs"
 
 stop_times_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*stop_times.txt"
+    pathGlobFilter: "*stop_times.parquet"
     basePath: "data/01_raw/gtfs"
 
 stops_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*stops.txt"
+    pathGlobFilter: "*stops.parquet"
     basePath: "data/01_raw/gtfs"
 
 transfers_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: true
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*transfers.txt"
+    pathGlobFilter: "*transfers.parquet"
     basePath: "data/01_raw/gtfs"
 
 trips_gtfs_raw_spark_df:
   type: "kedro.extras.datasets.spark.SparkDataSet"
   filepath: "data/01_raw/gtfs"
-  file_format: "csv"
-  load_args:
-    header: true
-    inferSchema: false
-    schema: "route_id string, service_id integer, trip_id integer, trip_headsign string, trip_short_name string, direction_id integer, block_id integer, shape_id integer, trip_type integer, wheelchair_accessible integer, bikes_allowed integer"
+  file_format: "parquet"
   generic_load_args:
-    pathGlobFilter: "*trips.txt"
+    pathGlobFilter: "*trips.parquet"
     basePath: "data/01_raw/gtfs"
