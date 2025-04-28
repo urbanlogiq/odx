@@ -27,6 +27,10 @@
 # limitations under the License.
 
 """Project settings."""
+from pathlib import Path
+
+from kedro_viz.integrations.kedro.sqlite_store import SQLiteStore
+
 from odx.SparkContext import SparkContext
 
 # Instantiate and list your project hooks here
@@ -35,8 +39,6 @@ from odx.SparkContext import SparkContext
 # List the installed plugins for which to disable auto-registry
 # DISABLE_HOOKS_FOR_PLUGINS = ("kedro-viz",)
 
-from kedro_viz.integrations.kedro.sqlite_store import SQLiteStore
-from pathlib import Path
 
 SESSION_STORE_CLASS = SQLiteStore
 SESSION_STORE_ARGS = {"path": str(Path(__file__).parents[2] / "data")}

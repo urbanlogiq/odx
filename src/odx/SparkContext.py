@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from kedro.framework.context import KedroContext
 from pyspark import SparkConf
 from pyspark.sql import SparkSession
-
-from kedro.framework.context import KedroContext
 
 
 class SparkContext(KedroContext):
