@@ -1490,7 +1490,7 @@ def remove_unexpected_journey_event_sequences(
     )
     return successful_journeys_spark_df.filter(
         F.col("UNEXPECTED_EVENT_PAIR") == 0
-    ).drop("NEXT_EVENT", "UNEXPECTED_EVENT_PAIR")
+    ).drop("NEXT_EVENT", "UNEXPECTED_EVENT_PAIR", "EVENT_PAIR")
 
 
 def validate_successful_journeys(successful_journeys_spark_df: SparkDF) -> SparkDF:
