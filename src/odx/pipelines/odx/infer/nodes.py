@@ -1579,6 +1579,27 @@ def get_run_metrics(
         .sum()
         .values
     }
+    # Calculate interline ratio
+    interline_ratio = (
+        successful_journeys_spark_df.select(
+            "JOURNEY_ID",
+            F.when(F.col("EVENT").contains("INTERLINE"), 1)
+            .otherwise(0)
+            .alias("HAS_INTERLINE"),
+        )
+        .groupBy("JOURNEY_ID")
+        .agg(F.max("HAS_INTERLINE").alias("HAS_INTERLINE"))
+        .agg(
+            F.count("JOURNEY_ID").alias("TOTAL_JOURNEYS"),
+            F.sum("HAS_INTERLINE").alias("JOURNEYS_WITH_INTERLINE"),
+        )
+        .withColumn(
+            "INTERLINE_RATIO",
+            F.col("JOURNEYS_WITH_INTERLINE") / F.col("TOTAL_JOURNEYS"),
+        )
+        .select("INTERLINE_RATIO")
+        .first()[0]
+    )
     metrics = {
         "N_SUCCESSFUL": successful_journeys_count,
         "N_FAILED": failed_journeys_count,
@@ -1588,6 +1609,7 @@ def get_run_metrics(
             / (successful_journeys_count + failed_journeys_count)
         ),
         "MEAN_CONFIDENCE": mean_confidence,
+        "PERCENT_INTERLINE": int(100*interline_ratio),
         **reasons_for_failure,
     }
     logger.info(metrics)
