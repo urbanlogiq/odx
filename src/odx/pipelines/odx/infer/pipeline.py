@@ -12,35 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pipeline for infering ODX from prepared data.
-"""
+"""Pipeline for infering ODX from prepared data."""
 from kedro.pipeline import Pipeline, node
+
 from .nodes import (
-    get_relevant_stop_times,
+    build_and_insert_interlining_trips_and_add_trip_type,
     build_possible_transfers,
-    merge_stop_locations_onto_taps,
-    get_possible_max_boarding_alternatives,
-    split_bus_from_max_lines,
-    get_max_possible_boarding_trip_ids,
-    get_bus_possible_boarding_trip_ids,
-    get_possible_alighting_points,
-    get_transfer_distance_and_minimum_required_transfer_time,
-    select_alighting_based_on_overall_probability,
-    get_alighting_probability,
     calculate_validity_score,
-    remove_impossible_journeys,
-    reshape_journeys,
-    reshape_failed_journeys,
     create_journey_ids_based_on_headway,
-    get_event_type,
-    insert_interlining_events,
     detect_looped_trips_according_to_threshold,
+    get_alighting_probability,
+    get_bus_possible_boarding_trip_ids,
+    get_event_type,
+    get_interlining_events,
     get_journey_start_dates,
-    get_year_months,
-    remove_journeys_with_no_destination,
-    validate_successful_journeys,
-    remove_implicit_interlining_events,
+    get_max_possible_boarding_trip_ids,
+    get_possible_alighting_points,
+    get_possible_max_boarding_alternatives,
+    get_relevant_stop_times,
     get_run_metrics,
+    get_transfer_distance_and_minimum_required_transfer_time,
+    get_year_months,
+    merge_stop_locations_onto_taps,
+    remove_impossible_journeys,
+    remove_journeys_with_no_destination,
+    remove_unexpected_journey_event_sequences,
+    reshape_failed_journeys,
+    reshape_journeys,
+    select_alighting_based_on_overall_probability,
+    split_bus_from_max_lines,
+    validate_successful_journeys,
 )
 
 
@@ -78,10 +79,19 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="get_relevant_prepared_stop_times",
             ),
             node(
+                func=build_and_insert_interlining_trips_and_add_trip_type,
+                inputs=[
+                    "time_localized_stop_times_prepared_spark_df",
+                    "interlining_trip_ids_prepared_spark_df",
+                    "params:allow_interlining",
+                ],
+                outputs="interline_updated_stop_times_prepared_spark_df",
+            ),
+            node(
                 func=merge_stop_locations_onto_taps,
                 inputs=[
                     "hop_spark_df_with_year_month_selected",
-                    "time_localized_stop_times_prepared_spark_df",
+                    "interline_updated_stop_times_prepared_spark_df",
                 ],
                 outputs="hop_spark_df_with_stop_locations",
                 tags=tags,
@@ -101,7 +111,7 @@ def create_pipeline(**kwargs) -> Pipeline:
             node(
                 func=get_possible_max_boarding_alternatives,
                 inputs=[
-                    "time_localized_stop_times_prepared_spark_df",
+                    "interline_updated_stop_times_prepared_spark_df",
                     "params:max_line_stop_alternative_distance_threshold",
                     "params:non_max_allowed_alternatives",
                 ],
@@ -123,7 +133,7 @@ def create_pipeline(**kwargs) -> Pipeline:
                 func=get_max_possible_boarding_trip_ids,
                 inputs=[
                     "max_possible_transfers_spark_df",
-                    "time_localized_stop_times_prepared_spark_df",
+                    "interline_updated_stop_times_prepared_spark_df",
                     "max_line_stop_alternatives_spark_df",
                 ],
                 outputs="max_transfers_w_identified_possible_boarding_trip_ids",
@@ -134,7 +144,7 @@ def create_pipeline(**kwargs) -> Pipeline:
                 func=get_bus_possible_boarding_trip_ids,
                 inputs=[
                     "bus_possible_transfers_spark_df",
-                    "time_localized_stop_times_prepared_spark_df",
+                    "interline_updated_stop_times_prepared_spark_df",
                 ],
                 outputs="bus_transfers_w_identified_possible_boarding_trip_ids",
                 tags=tags,
@@ -145,14 +155,9 @@ def create_pipeline(**kwargs) -> Pipeline:
                 inputs=[
                     "max_transfers_w_identified_possible_boarding_trip_ids",
                     "bus_transfers_w_identified_possible_boarding_trip_ids",
-                    "time_localized_stop_times_prepared_spark_df",
-                    "interlining_trip_ids_prepared_spark_df",
-                    "params:allow_interlining",
+                    "interline_updated_stop_times_prepared_spark_df",
                 ],
-                outputs=[
-                    "transfers_w_identified_possible_alighting_point",
-                    "stop_times_with_interlining_trip_ids_spark_df",
-                ],
+                outputs="transfers_w_identified_possible_alighting_point",
                 tags=tags,
                 name="get_possible_alighting_points",
             ),
@@ -194,19 +199,9 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="create_new_journey_ids_based_on_missed_busses",
             ),
             node(
-                func=insert_interlining_events,
-                inputs=[
-                    "hop_events_with_journey_ids_spark_df",
-                    "stop_times_with_interlining_trip_ids_spark_df",
-                ],
-                outputs="hop_events_with_interline_events_inserted_spark_df",
-                tags=tags,
-                name="insert_interlining_events",
-            ),
-            node(
                 func=remove_impossible_journeys,
                 inputs=[
-                    "hop_events_with_interline_events_inserted_spark_df",
+                    "hop_events_with_journey_ids_spark_df",
                     "params:max_time_to_destination_days",
                 ],
                 outputs=[
@@ -226,16 +221,30 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="reshape_impossible_journeys_for_output",
             ),
             node(
-                func = calculate_validity_score,
-                inputs = ["hop_events_with_journey_ids_spark_df_w_impossible_journeys_removed"],
-                outputs = "hop_events_with_validity_score_calculated",
-                tags =tags,
-                name = "calculate_validity_score"
+                func=calculate_validity_score,
+                inputs=[
+                    "hop_events_with_journey_ids_spark_df_w_impossible_journeys_removed"
+                ],
+                outputs="hop_events_with_validity_score_calculated",
+                tags=tags,
+                name="calculate_validity_score",
+            ),
+            node(
+                func=get_interlining_events,
+                inputs=[
+                    "hop_events_with_validity_score_calculated",
+                    "interline_updated_stop_times_prepared_spark_df",
+                    "params:allow_interlining",
+                ],
+                outputs="interlining_events_spark_df",
+                tags=tags,
+                name="get_interlining_events",
             ),
             node(
                 func=reshape_journeys,
                 inputs=[
                     "hop_events_with_validity_score_calculated",
+                    "interlining_events_spark_df",
                 ],
                 outputs="rider_events_spark_df",
                 tags=tags,
@@ -273,15 +282,15 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="validate_schema_of_successful_journeys",
             ),
             node(
-                func=remove_implicit_interlining_events,
+                func=remove_unexpected_journey_event_sequences,
                 inputs=["validated_rider_events_spark_df"],
-                outputs="rider_events_without_interlining_validated_spark_df",
+                outputs="rider_events_without_unexpected_sequences_spark_df",
                 tags=tags,
-                name="validate_presence_of_interlining_events",
+                name="remove_journeys_with_unexpected_sequences",
             ),
             node(
                 func=get_journey_start_dates,
-                inputs=["rider_events_without_interlining_validated_spark_df"],
+                inputs=["rider_events_without_unexpected_sequences_spark_df"],
                 outputs="inferred_rider_events_spark_df",
                 tags=tags,
                 name="get_journey_start_dates",

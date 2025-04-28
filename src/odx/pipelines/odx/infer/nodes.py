@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nodes for inferring ODX from prepared Hop data.
-"""
+"""Nodes for inferring ODX from prepared Hop data."""
 from functools import reduce
 from typing import List, Tuple, Union
 
 from loguru import logger
-from pyspark.sql import DataFrame as SparkDF, functions as F, Column
+from pyspark.sql import Column
+from pyspark.sql import DataFrame as SparkDF
+from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
 from pyspark.sql.window import Window
 
@@ -26,6 +27,11 @@ from .impossible_conditions_and_descriptions import (
     get_impossible_conditions_and_descriptions,
 )
 from .utils import haversine_meters
+
+INTERLINING_TRIP_TYPE = "INTERLINE"
+INTERLINING_STOP_TYPE = "INTERLINE"
+SINGLE_LINE_TRIP_TYPE = "SINGLE_LINE"
+SINGLE_LINE_STOP_TYPE = "SINGLE_LINE"
 
 
 def get_year_months(
@@ -242,6 +248,112 @@ def split_bus_from_max_lines(
     )
 
 
+def build_and_insert_interlining_trips_and_add_trip_type(
+    stop_times_spark_df: SparkDF,
+    interlining_trips_spark_df: SparkDF,
+    allow_interlining: bool,
+) -> SparkDF:
+    stop_times_spark_df = stop_times_spark_df.withColumn(
+        "TRIP_TYPE", F.lit(SINGLE_LINE_TRIP_TYPE)
+    ).withColumn("STOP_TYPE", F.lit(SINGLE_LINE_STOP_TYPE))
+    if allow_interlining:
+        # merge interlining trip ids
+        stop_times_spark_df = stop_times_spark_df.join(
+            interlining_trips_spark_df, on=["SERVICE_DATE", "TRIP_ID"], how="left"
+        )
+        stop_times_spark_df = (
+            stop_times_spark_df.withColumn(
+                "TRIP_TYPE",
+                F.when(
+                    F.col("INTERLINING_TRIP_ID") == F.col("TRIP_ID"),
+                    F.lit(SINGLE_LINE_TRIP_TYPE),
+                ).otherwise(F.lit(INTERLINING_TRIP_TYPE)),
+            )
+            .withColumn("TRIP_ID", F.col("INTERLINING_TRIP_ID"))
+            .drop("INTERLINING_TRIP_ID")
+        )
+        interlining_trips = stop_times_spark_df.filter(
+            F.col("TRIP_TYPE") == INTERLINING_TRIP_TYPE
+        )
+        # remove duplicated stops from interline trips
+        next_stop_window = Window.partitionBy(
+            F.col("SERVICE_DATE"), F.col("TRIP_ID")
+        ).orderBy(F.col("ARRIVE_DATETIME").asc())
+        interlining_trips = (
+            interlining_trips.withColumn(
+                "NEXT_STOP_ID", F.lead(F.col("STOP_ID"), 1).over(next_stop_window)
+            )
+            .withColumn(
+                "PREV_STOP_ID", F.lag(F.col("STOP_ID"), 1).over(next_stop_window)
+            )
+            .withColumn(
+                "NEXT_DEPARTURE_DATETIME",
+                F.lead(F.col("DEPARTURE_DATETIME"), 1).over(next_stop_window),
+            )
+            .withColumn(
+                "NEXT_DEPARTURE_TIME",
+                F.lead(F.col("DEPARTURE_TIME"), 1).over(next_stop_window),
+            )
+            .withColumn(
+                "NEXT_SCHEDULED_DEPARTURE_TIME",
+                F.lead(F.col("SCHEDULED_DEPARTURE_TIME"), 1).over(next_stop_window),
+            )
+        )
+        # reassign the departure times
+        interlining_trips = (
+            interlining_trips.withColumn(
+                "DEPARTURE_DATETIME",
+                F.when(
+                    F.col("NEXT_STOP_ID") == F.col("STOP_ID"),
+                    F.col("NEXT_DEPARTURE_DATETIME"),
+                ).otherwise(F.col("DEPARTURE_DATETIME")),
+            )
+            .withColumn(
+                "STOP_TYPE",
+                F.when(
+                    F.col("NEXT_STOP_ID") == F.col("STOP_ID"),
+                    F.lit(INTERLINING_STOP_TYPE),
+                ).otherwise(SINGLE_LINE_STOP_TYPE),
+            )
+            .withColumn(
+                "DEPARTURE_TIME",
+                F.when(
+                    F.col("NEXT_STOP_ID") == F.col("STOP_ID"),
+                    F.col("NEXT_DEPARTURE_TIME"),
+                ).otherwise(F.col("DEPARTURE_TIME")),
+            )
+            .withColumn(
+                "SCHEDULED_DEPARTURE_TIME",
+                F.when(
+                    F.col("NEXT_STOP_ID") == F.col("STOP_ID"),
+                    F.col("NEXT_SCHEDULED_DEPARTURE_TIME"),
+                ).otherwise(F.col("SCHEDULED_DEPARTURE_TIME")),
+            )
+            .drop(
+                "NEXT_STOP_ID",
+                "NEXT_SCHEDULED_DEPARTURE_TIME",
+                "NEXT_DEPARTURE_TIME",
+                "NEXT_DEPARTURE_DATETIME",
+            )
+        )
+        # remove the duplicate stops want to keep the first time the vehicle arrives as the stop
+        interlining_trips = interlining_trips.filter(
+            F.col("PREV_STOP_ID") != F.col("STOP_ID")
+        ).drop("PREV_STOP_ID")
+        # rebuild stop sequence
+        interlining_trips = interlining_trips.withColumn(
+            "STOP_SEQUENCE",
+            F.row_number().over(
+                next_stop_window
+            ),  # row number starts at 1, same as stop sequence
+        )
+        # reinsert interline trips
+        stop_times_spark_df = stop_times_spark_df.filter(
+            F.col("TRIP_TYPE") == SINGLE_LINE_TRIP_TYPE
+        ).unionByName(interlining_trips)
+    return stop_times_spark_df
+
+
 def get_max_possible_boarding_trip_ids(
     max_line_boarding_points_spark_df: SparkDF,
     stop_times_spark_df: SparkDF,
@@ -290,30 +402,31 @@ def get_max_possible_boarding_trip_ids(
     )
     # join the arrival datetimes of possible boarding points
     possible_boarding_stop_times = stop_times_spark_df.select(
-        F.col("SERVICE_DATE").alias("STOP_SERVICE_DATE"),
-        F.col("STOP_ID").alias("STOP_STOP_ID"),
-        F.col("ROUTE_ID").alias("STOP_LINE_ID"),
-        F.col("ROUTE_ID_OLD").alias("STOP_LINE_ID_OLD"),
+        F.col("SERVICE_DATE").alias("BOARDING_STOP_SERVICE_DATE"),
+        F.col("STOP_ID").alias("BOARDING_STOP_STOP_ID"),
+        F.col("ROUTE_ID").alias("BOARDING_STOP_LINE_ID"),
+        F.col("ROUTE_ID_OLD").alias("BOARDING_STOP_LINE_ID_OLD"),
         "ARRIVE_DATETIME",
         "DEPARTURE_DATETIME",
         "MEAN_BOARDING_INTERVAL_SECONDS",
         "TRIP_ID",
         "HOUR",
         F.col("DIRECTION_ID").alias("STOP_DIRECTION_ID"),
+        F.col("STOP_SEQUENCE").alias("BOARDING_STOP_STOP_SEQUENCE"),
     )
     max_possible_boarding_points = max_line_boarding_points_spark_df.join(
         possible_boarding_stop_times,
         (
             max_line_boarding_points_spark_df["SERVICE_DATE"]
-            == possible_boarding_stop_times["STOP_SERVICE_DATE"]
+            == possible_boarding_stop_times["BOARDING_STOP_SERVICE_DATE"]
         )
         & (
             max_line_boarding_points_spark_df["STOP_ID"]
-            == possible_boarding_stop_times["STOP_STOP_ID"]
+            == possible_boarding_stop_times["BOARDING_STOP_STOP_ID"]
         )
         & (
             max_line_boarding_points_spark_df["LINE_ID"]
-            == possible_boarding_stop_times["STOP_LINE_ID"]
+            == possible_boarding_stop_times["BOARDING_STOP_LINE_ID"]
         )
         & (
             max_line_boarding_points_spark_df["DATETIME"].cast("long")
@@ -322,11 +435,13 @@ def get_max_possible_boarding_trip_ids(
             )  # for max, you must tap on the platform then board. So you must tap before the vehicle departs
         ),
         how="left",
-    ).drop("STOP_STOP_ID", "STOP_LINE_ID", "STOP_SERVICE_DATE")
+    ).drop(
+        "BOARDING_STOP_STOP_ID", "BOARDING_STOP_LINE_ID", "BOARDING_STOP_SERVICE_DATE"
+    )
     max_departure_window = Window.partitionBy(
         F.col("UNIQUE_ROW_ID"),
         F.col(
-            "STOP_LINE_ID_OLD"
+            "BOARDING_STOP_LINE_ID_OLD"
         ),  # evaluate boarding probability against routes and directions
         F.col("STOP_DIRECTION_ID"),
     ).orderBy(F.col("DEPARTURE_DATETIME").asc())
@@ -352,7 +467,9 @@ def get_max_possible_boarding_trip_ids(
         ),
     )
     unique_row_window = Window.partitionBy(
-        F.col("UNIQUE_ROW_ID"), F.col("STOP_LINE_ID_OLD"), F.col("STOP_DIRECTION_ID")
+        F.col("UNIQUE_ROW_ID"),
+        F.col("BOARDING_STOP_LINE_ID_OLD"),
+        F.col("STOP_DIRECTION_ID"),
     ).orderBy(
         F.col("BOARDING_PROBABILITY").asc()
     )  # normalize along a line and direction
@@ -384,30 +501,31 @@ def get_bus_possible_boarding_trip_ids(
         SparkDF: Possible boarding trips
     """
     possible_boarding_stop_times = stop_times_spark_df.select(
-        F.col("SERVICE_DATE").alias("STOP_SERVICE_DATE"),
-        F.col("STOP_ID").alias("STOP_STOP_ID"),
-        F.col("ROUTE_ID").alias("STOP_LINE_ID"),
-        F.col("ROUTE_ID_OLD").alias("STOP_LINE_ID_OLD"),
+        F.col("SERVICE_DATE").alias("BOARDING_STOP_SERVICE_DATE"),
+        F.col("STOP_ID").alias("BOARDING_STOP_STOP_ID"),
+        F.col("ROUTE_ID").alias("BOARDING_STOP_LINE_ID"),
+        F.col("ROUTE_ID_OLD").alias("BOARDING_STOP_LINE_ID_OLD"),
         "ARRIVE_DATETIME",
         "DEPARTURE_DATETIME",
         "MEAN_BOARDING_INTERVAL_SECONDS",
         "TRIP_ID",
         "HOUR",
         F.col("DIRECTION_ID").alias("STOP_DIRECTION_ID"),
+        F.col("STOP_SEQUENCE").alias("BOARDING_STOP_STOP_SEQUENCE"),
     )
     bus_line_boarding_points_spark_df = bus_line_boarding_points_spark_df.join(
         possible_boarding_stop_times,
         (
             bus_line_boarding_points_spark_df["SERVICE_DATE"]
-            == possible_boarding_stop_times["STOP_SERVICE_DATE"]
+            == possible_boarding_stop_times["BOARDING_STOP_SERVICE_DATE"]
         )
         & (
             bus_line_boarding_points_spark_df["STOP_ID"]
-            == possible_boarding_stop_times["STOP_STOP_ID"]
+            == possible_boarding_stop_times["BOARDING_STOP_STOP_ID"]
         )
         & (
             bus_line_boarding_points_spark_df["LINE_ID"]
-            == possible_boarding_stop_times["STOP_LINE_ID"]
+            == possible_boarding_stop_times["BOARDING_STOP_LINE_ID"]
         )
         & (
             bus_line_boarding_points_spark_df["DATETIME"].cast("long")
@@ -416,7 +534,9 @@ def get_bus_possible_boarding_trip_ids(
             )  # only possible if you board then tap.
         ),
         how="left",
-    ).drop("STOP_STOP_ID", "STOP_LINE_ID", "STOP_SERVICE_DATE")
+    ).drop(
+        "BOARDING_STOP_STOP_ID", "BOARDING_STOP_LINE_ID", "BOARDING_STOP_SERVICE_DATE"
+    )
     bus_arrival_window = Window.partitionBy(F.col("UNIQUE_ROW_ID")).orderBy(
         F.col("ARRIVE_DATETIME").desc()
     )
@@ -465,17 +585,13 @@ def get_possible_alighting_points(
     max_transfer_events_spark_df: SparkDF,
     bus_transfer_events_spark_df: SparkDF,
     stop_times_spark_df: SparkDF,
-    interlining_trip_ids_spark_df: SparkDF,
-    allow_interlining: bool,
-) -> Tuple[SparkDF, SparkDF]:
+) -> SparkDF:
     """Get the possible alighting points based on the boarding trip id, the next tap location and the next tap time.
 
     Args:
         max_transfer_events_spark_df (SparkDF): Max Hop transfer events
         bus_transfer_events_spark_df (SparkDF): Bus Hop transfer events
         stop_times_spark_df (SparkDF): AVL Stop times.
-        interlining_trip_ids_spark_df (SparkDF): Maps between original trip ids and interlining trip ids.
-        allow_interlining (bool): Whether or not to allow interlining.
 
     Returns:
         SparkDF: SparkDF with candidate alighting locations inserted as new rows
@@ -483,61 +599,32 @@ def get_possible_alighting_points(
     transfer_events_with_trip_id_spark_df = max_transfer_events_spark_df.unionByName(
         bus_transfer_events_spark_df
     )
-    if allow_interlining:
-        interlining_trip_ids_spark_df = interlining_trip_ids_spark_df.withColumn(
-            "IS_INTERLINING_TRIP",
-            F.when(F.col("TRIP_ID") != F.col("INTERLINING_TRIP_ID"), True).otherwise(
-                False
-            ),
-        )
-        transfer_events_with_trip_id_spark_df = (
-            transfer_events_with_trip_id_spark_df.join(
-                F.broadcast(interlining_trip_ids_spark_df),
-                on=["SERVICE_DATE", "TRIP_ID"],
-                how="left",
-            )
-            .drop("TRIP_ID", "IS_INTERLINING_TRIP")
-            .withColumnRenamed("INTERLINING_TRIP_ID", "TRIP_ID")
-        )
-        stop_times_spark_df_w_interlining_information_spark_df = (
-            stop_times_spark_df.join(
-                F.broadcast(interlining_trip_ids_spark_df),
-                on=["SERVICE_DATE", "TRIP_ID"],
-                how="left",
-            )
-            .drop("TRIP_ID")
-            .withColumnRenamed("INTERLINING_TRIP_ID", "TRIP_ID")
-        )
-        stop_times_spark_df = (
-            stop_times_spark_df_w_interlining_information_spark_df.select(
-                F.col("SERVICE_DATE").alias("STOP_TIME_SERVICE_DATE"),
-                F.col("ROUTE_ID").alias("ALIGHTING_LINE_ID"),
-                F.col("ROUTE_ID_OLD").alias("ALIGHTING_LINE_ID_OLD"),
-                F.col("TRIP_ID").alias("STOP_TIME_TRIP_ID"),
-                F.col("IS_INTERLINING_TRIP"),
-                F.col("STOP_ID").alias("ALIGHTING_STOP_ID"),
-                F.col("ARRIVE_DATETIME").alias("ALIGHTING_ARRIVE_DATETIME"),
-                F.col("DEPARTURE_DATETIME").alias("ALIGHTING_DEPARTURE_DATETIME"),
-                F.col("STOP_LAT").alias("ALIGHTING_STOP_LAT"),
-                F.col("STOP_LON").alias("ALIGHTING_STOP_LON"),
-            )
-        )
-    else:
-        stop_times_spark_df_w_interlining_information_spark_df = stop_times_spark_df
+    stop_times_spark_df = stop_times_spark_df.select(
+        F.col("SERVICE_DATE").alias("ALIGHTING_STOP_SERVICE_DATE"),
+        "TRIP_TYPE",
+        F.col("TRIP_ID").alias("ALIGHTING_STOP_TRIP_ID"),
+        F.col("ARRIVE_DATETIME").alias("ALIGHTING_STOP_ARRIVE_DATETIME"),
+        F.col("STOP_LON").alias("ALIGHTING_STOP_LON"),
+        F.col("STOP_LAT").alias("ALIGHTING_STOP_LAT"),
+        F.col("DEPARTURE_DATETIME").alias("ALIGHTING_STOP_DEPARTURE_DATETIME"),
+        F.col("STOP_SEQUENCE").alias("ALIGHTING_STOP_STOP_SEQUENCE"),
+        F.col("ROUTE_ID_OLD").alias("ALIGHTING_STOP_ROUTE_ID"),
+        F.col("STOP_ID").alias("ALIGHTING_STOP_ID"),
+    )
     possible_transfer_events_spark_df = (
         transfer_events_with_trip_id_spark_df.join(
             stop_times_spark_df,
             (
                 (
-                    stop_times_spark_df["STOP_TIME_SERVICE_DATE"]
+                    stop_times_spark_df["ALIGHTING_STOP_SERVICE_DATE"]
                     == transfer_events_with_trip_id_spark_df["SERVICE_DATE"]
                 )
                 & (
-                    stop_times_spark_df["STOP_TIME_TRIP_ID"]
+                    stop_times_spark_df["ALIGHTING_STOP_TRIP_ID"]
                     == transfer_events_with_trip_id_spark_df["TRIP_ID"]
                 )
                 & (
-                    stop_times_spark_df["ALIGHTING_ARRIVE_DATETIME"].cast("long")
+                    stop_times_spark_df["ALIGHTING_STOP_ARRIVE_DATETIME"].cast("long")
                     <= (
                         transfer_events_with_trip_id_spark_df["DATETIME_NEXT"].cast(
                             "long"
@@ -548,20 +635,17 @@ def get_possible_alighting_points(
                     transfer_events_with_trip_id_spark_df["DEPARTURE_DATETIME"].cast(
                         "long"
                     )
-                    < stop_times_spark_df["ALIGHTING_ARRIVE_DATETIME"].cast("long")
+                    < stop_times_spark_df["ALIGHTING_STOP_ARRIVE_DATETIME"].cast("long")
                 )
                 & (
                     transfer_events_with_trip_id_spark_df["DATETIME"].cast("long")
-                    < stop_times_spark_df["ALIGHTING_ARRIVE_DATETIME"].cast("long")
+                    < stop_times_spark_df["ALIGHTING_STOP_ARRIVE_DATETIME"].cast("long")
                 )
             ),
             how="left",
         )
-    ).drop("STOP_TIME_SERVICE_DATE")
-    return (
-        possible_transfer_events_spark_df,
-        stop_times_spark_df_w_interlining_information_spark_df,
-    )
+    ).drop("STOP_TIME_SERVICE_DATE", "STOP_TIME_TRIP_ID")
+    return possible_transfer_events_spark_df
 
 
 def get_transfer_distance_and_minimum_required_transfer_time(
@@ -577,40 +661,35 @@ def get_transfer_distance_and_minimum_required_transfer_time(
     Returns:
         SparkDF: SparkDF with minimum required transfer time and transfer distance columns added
     """
-    transfer_events_with_trip_id_spark_df = (
+    transfer_events_with_trip_id_spark_df = transfer_events_with_trip_id_spark_df.withColumn(
+        "TRANSFER_DISTANCE_METERS",
         (
-            transfer_events_with_trip_id_spark_df.withColumn(
-                "TRANSFER_DISTANCE_METERS",
-                (
-                    2 ** (0.5)
-                )  # sqrt(2) to control for grid. This is important because the linear distance is not necessarily the distance walked.
-                * haversine_meters(
-                    F.col("ALIGHTING_STOP_LAT"),
-                    F.col("ALIGHTING_STOP_LON"),
-                    F.col("STOP_LAT_NEXT"),
-                    F.col("STOP_LON_NEXT"),
-                ),
-            )
-        )
-        .withColumn(
-            "MINIMUM_REQUIRED_TRANSFER_TIME_SECONDS",
-            F.col("TRANSFER_DISTANCE_METERS") / F.lit(walking_speed_meters_second),
-        )
-        .withColumn(
-            "TOTAL_WALKING_TRAVEL_TIME_SECONDS",
+            2 ** (0.5)
+        )  # sqrt(2) to control for grid. This is important because the linear distance is not necessarily the distance walked.
+        * haversine_meters(
+            F.col("ALIGHTING_STOP_LAT"),
+            F.col("ALIGHTING_STOP_LON"),
+            F.col("STOP_LAT_NEXT"),
+            F.col("STOP_LON_NEXT"),
+        ),
+    )
+    transfer_events_with_trip_id_spark_df = transfer_events_with_trip_id_spark_df.withColumn(
+        "MINIMUM_REQUIRED_TRANSFER_TIME_SECONDS",
+        F.col("TRANSFER_DISTANCE_METERS") / F.lit(walking_speed_meters_second),
+    ).withColumn(
+        "TOTAL_WALKING_TRAVEL_TIME_SECONDS",
+        (
             (
-                (
-                    2 ** (0.5)
-                )  # sqrt(2) to control for grid. This is important because the linear distance is not necessarily the distance walked.
-                * haversine_meters(
-                    F.col("STOP_LAT"),
-                    F.col("STOP_LON"),
-                    F.col("STOP_LAT_NEXT"),
-                    F.col("STOP_LON_NEXT"),
-                )
+                2 ** (0.5)
+            )  # sqrt(2) to control for grid. This is important because the linear distance is not necessarily the distance walked.
+            * haversine_meters(
+                F.col("STOP_LAT"),
+                F.col("STOP_LON"),
+                F.col("STOP_LAT_NEXT"),
+                F.col("STOP_LON_NEXT"),
             )
-            / F.lit(walking_speed_meters_second),
         )
+        / F.lit(walking_speed_meters_second),
     )
     return transfer_events_with_trip_id_spark_df
 
@@ -628,13 +707,13 @@ def get_alighting_probability(
         SparkDF: Returns a SparkDF containing possible alighting locations.
     """
     within_trip_window = Window.partitionBy("UNIQUE_ROW_ID", "TRIP_ID").orderBy(
-        F.col("ALIGHTING_DEPARTURE_DATETIME").asc()
+        F.col("ALIGHTING_STOP_DEPARTURE_DATETIME").asc()
     )
     possible_transfer_events_spark_df = (
         possible_transfer_events_spark_df.withColumn(
             "TRAVEL_TIME_SECONDS",
             (
-                F.col("ALIGHTING_ARRIVE_DATETIME").cast("long")
+                F.col("ALIGHTING_STOP_ARRIVE_DATETIME").cast("long")
                 - F.col("ARRIVE_DATETIME").cast("long")
                 + F.col("MINIMUM_REQUIRED_TRANSFER_TIME_SECONDS")
             ),
@@ -697,8 +776,8 @@ def get_alighting_probability(
             possible_transfer_events_spark_df.withColumn(
                 "STOP_ALIGHTING_PROBABILITY",
                 F.when(
-                    F.col("ALIGHTING_ARRIVE_DATETIME")
-                    != F.col("ALIGHTING_DEPARTURE_DATETIME"),
+                    F.col("ALIGHTING_STOP_ARRIVE_DATETIME")
+                    != F.col("ALIGHTING_STOP_DEPARTURE_DATETIME"),
                     calculate_stop_alighting_probability(),
                 ).otherwise(F.lit(0).cast("double")),
             )
@@ -745,7 +824,9 @@ def select_alighting_based_on_overall_probability(
         F.col("LINE_ID") == 200
     )
     within_route_and_direction_window = Window.partitionBy(
-        F.col("UNIQUE_ROW_ID"), F.col("STOP_LINE_ID_OLD"), F.col("STOP_DIRECTION_ID")
+        F.col("UNIQUE_ROW_ID"),
+        F.col("BOARDING_STOP_LINE_ID_OLD"),
+        F.col("STOP_DIRECTION_ID"),
     ).orderBy(F.col("TRANSFER_DISTANCE_METERS").desc())
     ### include route selection
     max_transfer_events_spark_df = max_transfer_events_spark_df.withColumn(
@@ -775,10 +856,12 @@ def select_alighting_based_on_overall_probability(
         max_transfer_events_spark_df.select(
             "UNIQUE_ROW_ID",
             "STOP_DIRECTION_ID",
-            "STOP_LINE_ID_OLD",
+            "BOARDING_STOP_LINE_ID_OLD",
             "ROUTE_AND_DIRECTION_UTILITY",
         )
-        .dropDuplicates(["UNIQUE_ROW_ID", "STOP_LINE_ID_OLD", "STOP_DIRECTION_ID"])
+        .dropDuplicates(
+            ["UNIQUE_ROW_ID", "BOARDING_STOP_LINE_ID_OLD", "STOP_DIRECTION_ID"]
+        )
         .groupBy("UNIQUE_ROW_ID")
         .agg(
             F.sum(F.col("ROUTE_AND_DIRECTION_UTILITY")).alias(
@@ -811,13 +894,13 @@ def select_alighting_based_on_overall_probability(
     bus_transfer_events_spark_df = possible_transfer_events_spark_df.filter(
         F.col("LINE_ID") != 200
     )
-    bus_transfer_events_spark_df = possible_transfer_events_spark_df.withColumn(
+    bus_transfer_events_spark_df = bus_transfer_events_spark_df.withColumn(
         "CONFIDENCE", F.col("ALIGHTING_PROBABILITY") * F.col("BOARDING_PROBABILITY")
     )
     # select most confident
     confidence_selection_window = Window.partitionBy("UNIQUE_ROW_ID").orderBy(
         F.col("CONFIDENCE").desc(),
-        F.col("ALIGHTING_ARRIVE_DATETIME").asc(),
+        F.col("ALIGHTING_STOP_ARRIVE_DATETIME").asc(),
     )
     bus_transfer_events_spark_df = (
         bus_transfer_events_spark_df.withColumn(
@@ -837,7 +920,8 @@ def select_alighting_based_on_overall_probability(
     selected_alighting_events = max_transfer_events_spark_df.unionByName(
         bus_transfer_events_spark_df
     )
-    return selected_alighting_events.cache()
+    selected_alighting_events = selected_alighting_events.cache()
+    return selected_alighting_events
 
 
 def create_journey_ids_based_on_headway(
@@ -868,7 +952,7 @@ def create_journey_ids_based_on_headway(
         (
             (
                 F.col("DATETIME_NEXT").cast("long")
-                - F.col("ALIGHTING_ARRIVE_DATETIME").cast("long")
+                - F.col("ALIGHTING_STOP_ARRIVE_DATETIME").cast("long")
             )
             - F.col("MINIMUM_REQUIRED_TRANSFER_TIME_SECONDS")
         ),
@@ -982,7 +1066,7 @@ def remove_impossible_journeys(
     hop_events_spark_df: SparkDF,
     max_time_to_destination_days: int,
 ) -> Tuple[SparkDF, SparkDF]:
-    """Some journeys may some journeys that include impossible events given the available time.
+    """Some journeys may include impossible events given the available time.
         We remove these. Impossible conditions are detailed in impossible_conditions_and_descriptions.py
 
     Args:
@@ -1024,8 +1108,8 @@ def remove_impossible_journeys(
     ), hop_events_spark_df.filter(F.col("IS_IMPOSSIBLE") > 0).drop("IS_IMPOSSIBLE")
 
 
-def insert_interlining_events(
-    hop_events_spark_df: SparkDF, stop_times_spark_df: SparkDF
+def get_interlining_events(
+    hop_events_spark_df: SparkDF, stop_times_spark_df: SparkDF, allow_interlining: bool
 ) -> SparkDF:
     """Insert interlining events into the hop events. Interlining trips are then used
         to replace original trips.
@@ -1037,97 +1121,48 @@ def insert_interlining_events(
     Returns:
         SparkDF: Returns a SparkDF with interlining events inserted into the hop events.
     """
-    interlining_locations_window = Window.partitionBy(
-        F.col("TRIP_ID"), F.col("SERVICE_DATE")
-    ).orderBy(F.col("ARRIVE_DATETIME"))
-    interlining_locations_spark_df = (
-        stop_times_spark_df.withColumn(
-            "ROUTE_ID_OLD_NEXT",
-            F.lead(F.col("ROUTE_ID_OLD"), 1).over(interlining_locations_window),
+    if allow_interlining:
+        interlining_locations_spark_df = stop_times_spark_df.filter(
+            F.col("STOP_TYPE") == INTERLINING_STOP_TYPE
         )
-        .withColumn(
-            "STOP_ID_NEXT",
-            F.lead(F.col("STOP_ID"), 1).over(interlining_locations_window),
+        interlining_hop_event_legs = hop_events_spark_df.filter(
+            F.col("BOARDING_STOP_LINE_ID_OLD") != F.col("ALIGHTING_STOP_ROUTE_ID")
         )
-        .withColumn(
-            "STOP_LAT_NEXT",
-            F.lead(F.col("STOP_LAT"), 1).over(interlining_locations_window),
-        )
-        .withColumn(
-            "STOP_LON_NEXT",
-            F.lead(F.col("STOP_LON"), 1).over(interlining_locations_window),
-        )
-        .filter(F.col("ROUTE_ID_OLD_NEXT") != F.col("ROUTE_ID_OLD"))
-        .select(
+        interlining_locations_spark_df = interlining_locations_spark_df.select(
+            F.col("STOP_SEQUENCE").alias("INTERLINING_STOP_SEQUENCE"),
             F.col("TRIP_ID").alias("INTERLINING_TRIP_ID"),
-            F.col("ARRIVE_DATETIME").alias("INTERLINING_ARRIVE_DATETIME"),
-            F.col("DEPARTURE_DATETIME").alias("INTERLINING_DEPARTURE_DATETIME"),
             F.col("SERVICE_DATE").alias("INTERLINING_SERVICE_DATE"),
-            F.col("ROUTE_ID_OLD").alias("INTERLINING_ROUTE_ID"),
-            F.col("ROUTE_ID_OLD_NEXT").alias("INTERLINING_ROUTE_ID_NEXT"),
             F.col("STOP_ID").alias("INTERLINING_STOP_ID"),
-            F.col("STOP_ID_NEXT").alias("INTERLINING_STOP_ID_NEXT"),
             F.col("STOP_LAT").alias("INTERLINING_STOP_LAT"),
             F.col("STOP_LON").alias("INTERLINING_STOP_LON"),
-            F.col("STOP_LAT_NEXT").alias("INTERLINING_STOP_LAT_NEXT"),
-            F.col("STOP_LON_NEXT").alias("INTERLINING_STOP_LON_NEXT"),
+            F.col("ARRIVE_DATETIME").alias("INTERLINING_ARRIVE_DATETIME"),
+            F.col("DEPARTURE_DATETIME").alias("INTERLINING_DEPARTURE_DATETIME"),
+            F.col("STOP_TYPE"),
         )
-        .distinct()
-    )
-    hop_events_spark_df = hop_events_spark_df.join(
-        interlining_locations_spark_df,
-        (
-            hop_events_spark_df["TRIP_ID"]
-            == interlining_locations_spark_df["INTERLINING_TRIP_ID"]
+        interlining_hop_event_legs = interlining_hop_event_legs.join(
+            interlining_locations_spark_df,
+            (
+                (
+                    interlining_locations_spark_df["INTERLINING_TRIP_ID"]
+                    == interlining_hop_event_legs["TRIP_ID"]
+                )
+                & (
+                    interlining_locations_spark_df["INTERLINING_STOP_SEQUENCE"]
+                    < interlining_hop_event_legs["ALIGHTING_STOP_STOP_SEQUENCE"]
+                )
+                & (
+                    interlining_locations_spark_df["INTERLINING_STOP_SEQUENCE"]
+                    > interlining_hop_event_legs["BOARDING_STOP_STOP_SEQUENCE"]
+                )
+                & (
+                    interlining_locations_spark_df["INTERLINING_SERVICE_DATE"]
+                    == interlining_hop_event_legs["SERVICE_DATE"]
+                )
+            ),
         )
-        & (
-            hop_events_spark_df["SERVICE_DATE"]
-            == interlining_locations_spark_df["INTERLINING_SERVICE_DATE"]
-        )
-        & (
-            hop_events_spark_df["DATETIME"]
-            <= interlining_locations_spark_df["INTERLINING_ARRIVE_DATETIME"]
-        )
-        & (
-            hop_events_spark_df["ALIGHTING_DEPARTURE_DATETIME"]
-            >= interlining_locations_spark_df["INTERLINING_DEPARTURE_DATETIME"]
-        )
-        & (
-            hop_events_spark_df["STOP_LINE_ID_OLD"]
-            == interlining_locations_spark_df["INTERLINING_ROUTE_ID"]
-        )
-        & (
-            hop_events_spark_df["ALIGHTING_LINE_ID_OLD"]
-            == interlining_locations_spark_df["INTERLINING_ROUTE_ID_NEXT"]
-        )
-        & (
-            hop_events_spark_df["ALIGHTING_STOP_ID"]
-            != interlining_locations_spark_df["INTERLINING_STOP_ID_NEXT"]
-        )
-        & (
-            hop_events_spark_df["ALIGHTING_STOP_ID"]
-            != interlining_locations_spark_df["INTERLINING_STOP_ID"]
-        )
-        & (
-            hop_events_spark_df["STOP_ID"]
-            != interlining_locations_spark_df["INTERLINING_STOP_ID"]
-        )
-        & (
-            hop_events_spark_df["STOP_ID"]
-            != interlining_locations_spark_df["INTERLINING_STOP_ID_NEXT"]
-        ),
-        how="left",
-    )
-    # ensure that journeys where the rider disembarked at an interlining point retain the original line id
-    hop_events_spark_df = hop_events_spark_df.withColumn(
-        "ALIGHTING_LINE_ID_OLD",
-        F.when(
-            (F.col("STOP_LINE_ID_OLD") != F.col("ALIGHTING_LINE_ID_OLD"))
-            & F.col("INTERLINING_ROUTE_ID").isNull(),
-            F.col("STOP_LINE_ID_OLD"),
-        ).otherwise(F.col("ALIGHTING_LINE_ID_OLD")),
-    )
-    return hop_events_spark_df.dropDuplicates(["DATETIME", "JOURNEY_ID"])
+
+        return interlining_hop_event_legs
+    return hop_events_spark_df.filter(F.lit(False))
 
 
 def reshape_failed_journeys(failed_journeys_spark_df: SparkDF) -> SparkDF:
@@ -1146,7 +1181,7 @@ def reshape_failed_journeys(failed_journeys_spark_df: SparkDF) -> SparkDF:
             "STOP_ID",
             "CARD_ID",
             "JOURNEY_ID",
-            "LINE_ID",
+            F.col("BOARDING_STOP_LINE_ID_OLD").alias("LINE_ID"),
             "STOP_LAT",
             "STOP_LON",
             "DIRECTION_ID",
@@ -1159,11 +1194,11 @@ def reshape_failed_journeys(failed_journeys_spark_df: SparkDF) -> SparkDF:
     # get alightings
     alightings = (
         failed_journeys_spark_df.select(
-            F.col("ALIGHTING_ARRIVE_DATETIME").alias("DATETIME"),
+            F.col("ALIGHTING_STOP_ARRIVE_DATETIME").alias("DATETIME"),
             F.col("ALIGHTING_STOP_ID").alias("STOP_ID"),
             "CARD_ID",
             "JOURNEY_ID",
-            F.col("ALIGHTING_LINE_ID").alias("LINE_ID"),
+            F.col("ALIGHTING_STOP_ROUTE_ID").alias("LINE_ID"),
             F.col("ALIGHTING_STOP_LAT").alias("STOP_LAT"),
             F.col("ALIGHTING_STOP_LON").alias("STOP_LON"),
             "DIRECTION_ID",
@@ -1179,7 +1214,9 @@ def reshape_failed_journeys(failed_journeys_spark_df: SparkDF) -> SparkDF:
     return boardings.unionByName(alightings, allowMissingColumns=True)
 
 
-def reshape_journeys(inferred_transfers_spark_df: SparkDF) -> SparkDF:
+def reshape_journeys(
+    inferred_transfers_spark_df: SparkDF, interlining_events: SparkDF
+) -> SparkDF:
     """Journeys are reshaped into boarding and alighting events.
 
     Args:
@@ -1193,11 +1230,13 @@ def reshape_journeys(inferred_transfers_spark_df: SparkDF) -> SparkDF:
     boardings = (
         inferred_transfers_spark_df.select(
             F.col("FARE_CATEGORY_DESCRIPTION"),
-            F.col("DEPARTURE_DATETIME").alias("DATETIME"),
+            F.col("ARRIVE_DATETIME").alias("DATETIME"),
             "STOP_ID",
             "CARD_ID",
             "JOURNEY_ID",
-            F.col("STOP_LINE_ID_OLD").alias("LINE_ID"),  # use GTFS line ids not HOP
+            F.col("BOARDING_STOP_LINE_ID_OLD").alias(
+                "LINE_ID"
+            ),  # use GTFS line ids not HOP
             "STOP_LAT",
             "STOP_LON",
             F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),  # use gtfs direction id,
@@ -1211,11 +1250,11 @@ def reshape_journeys(inferred_transfers_spark_df: SparkDF) -> SparkDF:
         inferred_transfers_spark_df.filter(~F.col("DATETIME_NEXT").isNull())
         .select(
             "FARE_CATEGORY_DESCRIPTION",
-            F.col("ALIGHTING_ARRIVE_DATETIME").alias("DATETIME"),
+            F.col("ALIGHTING_STOP_ARRIVE_DATETIME").alias("DATETIME"),
             F.col("ALIGHTING_STOP_ID").alias("STOP_ID"),
             "CARD_ID",
             "JOURNEY_ID",
-            F.col("ALIGHTING_LINE_ID_OLD").alias(
+            F.col("ALIGHTING_STOP_ROUTE_ID").alias(
                 "LINE_ID"
             ),  # USE GTFS LINE IDS NOT HOP
             F.col("ALIGHTING_STOP_LAT").alias("STOP_LAT"),
@@ -1229,51 +1268,58 @@ def reshape_journeys(inferred_transfers_spark_df: SparkDF) -> SparkDF:
         ~F.col("STOP_ID").isNull()
     )  # remove last unknown alighting
     # get interlining events
-    interlining_events = (
-        inferred_transfers_spark_df.filter(~F.col("INTERLINING_ROUTE_ID").isNull())
-        .filter(~F.col("INTERLINING_STOP_LAT").isNull())
-        .filter(~F.col("INTERLINING_STOP_LAT_NEXT").isNull())
-    )
-    interlinings_starts = (
-        interlining_events.select(
-            "FARE_CATEGORY_DESCRIPTION",
-            F.col("INTERLINING_ARRIVE_DATETIME").alias("DATETIME"),
-            F.col("INTERLINING_STOP_ID").alias("STOP_ID"),
-            "CARD_ID",
-            "JOURNEY_ID",
-            F.col("INTERLINING_ROUTE_ID").alias("LINE_ID"),
-            F.col("INTERLINING_STOP_LAT").alias("STOP_LAT"),
-            F.col("INTERLINING_STOP_LON").alias("STOP_LON"),
-            F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
-            "CONFIDENCE",
-            "VALIDITY_SCORE",
+    if interlining_events.first() is not None:
+        interlining_events = (
+            interlining_events.filter(~F.col("INTERLINING_STOP_ID").isNull())
+            .filter(~F.col("INTERLINING_STOP_LAT").isNull())
+            .filter(~F.col("DATETIME_NEXT").isNull())
+            .filter(F.col("INTERLINING_ARRIVE_DATETIME") > F.col("ARRIVE_DATETIME"))
+            .filter(
+                F.col("INTERLINING_DEPARTURE_DATETIME")
+                < F.col("ALIGHTING_STOP_ARRIVE_DATETIME")
+            )
         )
-        .withColumn("EVENT", F.lit("INTERLINE_STARTED"))
-        .withColumn("EVENT_TYPE", F.lit("MID_JOURNEY"))
-    )
-    interlinings_ends = (
-        interlining_events.select(
-            "FARE_CATEGORY_DESCRIPTION",
-            F.col("INTERLINING_DEPARTURE_DATETIME").alias("DATETIME"),
-            F.col("INTERLINING_STOP_ID_NEXT").alias("STOP_ID"),
-            "CARD_ID",
-            "JOURNEY_ID",
-            F.col("INTERLINING_ROUTE_ID_NEXT").alias("LINE_ID"),
-            F.col("INTERLINING_STOP_LAT_NEXT").alias("STOP_LAT"),
-            F.col("INTERLINING_STOP_LON_NEXT").alias("STOP_LON"),
-            F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
-            "CONFIDENCE",
-            "VALIDITY_SCORE",
+        interlinings_starts = (
+            interlining_events.select(
+                "FARE_CATEGORY_DESCRIPTION",
+                F.col("INTERLINING_ARRIVE_DATETIME").alias("DATETIME"),
+                F.col("INTERLINING_STOP_ID").alias("STOP_ID"),
+                "CARD_ID",
+                "JOURNEY_ID",
+                F.col("BOARDING_STOP_LINE_ID_OLD").alias("LINE_ID"),
+                F.col("INTERLINING_STOP_LAT").alias("STOP_LAT"),
+                F.col("INTERLINING_STOP_LON").alias("STOP_LON"),
+                F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
+                "CONFIDENCE",
+                "VALIDITY_SCORE",
+            )
+            .withColumn("EVENT", F.lit("INTERLINE_STARTED"))
+            .withColumn("EVENT_TYPE", F.lit("MID_JOURNEY"))
         )
-        .withColumn("EVENT", F.lit("INTERLINE_ENDED"))
-        .withColumn("EVENT_TYPE", F.lit("MID_JOURNEY"))
-    )
-    interlinings = interlinings_starts.unionByName(
-        interlinings_ends, allowMissingColumns=True
-    )
-    return boardings.unionByName(alightings, allowMissingColumns=True).unionByName(
-        interlinings, allowMissingColumns=True
-    )
+        interlinings_ends = (
+            interlining_events.select(
+                "FARE_CATEGORY_DESCRIPTION",
+                F.col("INTERLINING_DEPARTURE_DATETIME").alias("DATETIME"),
+                F.col("INTERLINING_STOP_ID").alias("STOP_ID"),
+                "CARD_ID",
+                "JOURNEY_ID",
+                F.col("ALIGHTING_STOP_ROUTE_ID").alias("LINE_ID"),
+                F.col("INTERLINING_STOP_LAT").alias("STOP_LAT"),
+                F.col("INTERLINING_STOP_LON").alias("STOP_LON"),
+                F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
+                "CONFIDENCE",
+                "VALIDITY_SCORE",
+            )
+            .withColumn("EVENT", F.lit("INTERLINE_ENDED"))
+            .withColumn("EVENT_TYPE", F.lit("MID_JOURNEY"))
+        )
+        interlinings = interlinings_starts.unionByName(interlinings_ends)
+        events = boardings.unionByName(
+            alightings, allowMissingColumns=True
+        ).unionByName(interlinings, allowMissingColumns=True)
+    else:
+        events = boardings.unionByName(alightings, allowMissingColumns=True)
+    return events
 
 
 def get_event_type(action_history_spark_df: SparkDF) -> SparkDF:
@@ -1289,10 +1335,12 @@ def get_event_type(action_history_spark_df: SparkDF) -> SparkDF:
     action_window = Window.partitionBy("CARD_ID", "JOURNEY_ID").orderBy(
         F.col("DATETIME").asc()
     )
-    action_history_spark_df = (
-        action_history_spark_df.withColumn(
-            "ROW_ID", F.row_number().over(history_window)
-        )
+    interlines = action_history_spark_df.filter(F.col("EVENT").contains("INTERLINE"))
+    non_interlines = action_history_spark_df.filter(
+        ~F.col("EVENT").contains("INTERLINE")
+    )
+    non_interlines = (
+        non_interlines.withColumn("ROW_ID", F.row_number().over(history_window))
         .withColumn(
             "MAX_ROW_ID",
             F.max(F.col("ROW_ID")).over(
@@ -1306,8 +1354,8 @@ def get_event_type(action_history_spark_df: SparkDF) -> SparkDF:
             F.when((F.col("ROW_ID") == F.col("MAX_ROW_ID")), True).otherwise(False),
         )
     ).drop("ROW_ID", "MAX_ROW_ID")
-    action_history_spark_df = (
-        action_history_spark_df.withColumn("ROW_ID", F.row_number().over(action_window))
+    non_interlines = (
+        non_interlines.withColumn("ROW_ID", F.row_number().over(action_window))
         .withColumn(
             "MAX_ROW_ID",
             F.max(F.col("ROW_ID")).over(
@@ -1337,6 +1385,7 @@ def get_event_type(action_history_spark_df: SparkDF) -> SparkDF:
         )
         .drop("ROW_ID", "MAX_ROW_ID", "IS_FINAL_EVENT")
     )
+    action_history_spark_df = interlines.unionByName(non_interlines)
     return action_history_spark_df
 
 
@@ -1353,41 +1402,23 @@ def detect_looped_trips_according_to_threshold(
         SparkDF: SparkDF where IS_LOOP has been added.
     """
     action_history_spark_df = action_history_spark_df.cache()
-    origins = action_history_spark_df.filter(F.col("EVENT_TYPE") == "ORIGIN")
-    destinations = action_history_spark_df.filter(F.col("EVENT_TYPE") == "DESTINATION")
-    distances = (
-        origins.select(
-            "JOURNEY_ID",
-            F.col("STOP_LAT").alias("STOP_LAT_ORIGIN"),
-            F.col("STOP_LON").alias("STOP_LON_ORIGIN"),
-        )
-        .join(
-            destinations.select(
-                "JOURNEY_ID",
-                F.col("STOP_LAT").alias("STOP_LAT_DESTINATION"),
-                F.col("STOP_LON").alias("STOP_LON_DESTINATION"),
-            ),
-            on="JOURNEY_ID",
-            how="left",
-        )
-        .withColumn(
-            "TRIP_DISTANCE_METERS",
-            haversine_meters(
-                F.col("STOP_LAT_ORIGIN"),
-                F.col("STOP_LON_ORIGIN"),
-                F.col("STOP_LAT_DESTINATION"),
-                F.col("STOP_LON_DESTINATION"),
-            ),
-        )
+    window = (
+        Window.partitionBy("JOURNEY_ID")
+        .orderBy(F.col("DATETIME").asc())
+        .rowsBetween(Window.unboundedPreceding, Window.unboundedFollowing)
     )
-    distances = distances.withColumn(
+    action_history_spark_df = action_history_spark_df.withColumn(
         "IS_LOOP",
-        F.when(F.col("TRIP_DISTANCE_METERS") < loop_threshold, True).otherwise(False),
-    )
-    action_history_spark_df = action_history_spark_df.join(
-        distances.select("JOURNEY_ID", "IS_LOOP"), on="JOURNEY_ID", how="left"
-    ).withColumn(
-        "IS_LOOP", F.when(F.col("IS_LOOP").isNull(), False).otherwise(F.col("IS_LOOP"))
+        F.when(
+            haversine_meters(
+                F.last(F.col("STOP_LAT")).over(window),
+                F.last(F.col("STOP_LON")).over(window),
+                F.first(F.col("STOP_LAT")).over(window),
+                F.first(F.col("STOP_LON")).over(window),
+            )
+            < loop_threshold,
+            True,
+        ).otherwise(False),
     )
     return action_history_spark_df
 
@@ -1413,37 +1444,53 @@ def get_journey_start_dates(rider_events_spark_df: SparkDF) -> SparkDF:
     ).repartition(F.col("JOURNEY_START_DATE"))
 
 
-def remove_implicit_interlining_events(
+def remove_unexpected_journey_event_sequences(
     successful_journeys_spark_df: SparkDF,
 ) -> SparkDF:
     """Validate that only journeys including interlining events have
     changes in line id between a boarding and alighting.
 
     Args:
-        successful_journeys_spark_df (SparkDF): Description
+        successful_journeys_spark_df (SparkDF): Successfully formatted journeys.
 
     Returns:
-        SparkDF: Original SparkDF if interlining validated, error otherwise.
+        SparkDF: Original SparkDF with unsuccessful journeys removed.
     """
-    non_interlining_journeys = (
-        successful_journeys_spark_df.filter(~F.col("EVENT").contains("INTER"))
-        .select("JOURNEY_ID")
-        .distinct()
+    null_event_string = "NONE"
+    allowed_event_pairs = [
+        "BOARDED-ALIGHTED",
+        "BOARDED-INTERLINE_STARTED",
+        "INTERLINE_STARTED-INTERLINE_ENDED",
+        "INTERLINE_ENDED-INTERLINE_STARTED",
+        "INTERLINE_ENDED-ALIGHTED",
+        "ALIGHTED-BOARDED",
+        f"ALIGHTED-{null_event_string}",
+    ]
+    event_window = Window.partitionBy("JOURNEY_ID").orderBy(F.col("DATETIME").asc())
+    successful_journeys_spark_df = successful_journeys_spark_df.withColumn(
+        "NEXT_EVENT", F.lead(F.col("EVENT"), 1).over(event_window)
+    ).withColumn(
+        "NEXT_EVENT",
+        F.when(F.col("NEXT_EVENT").isNotNull(), F.col("NEXT_EVENT")).otherwise(
+            null_event_string
+        ),
     )
-    window = Window.partitionBy("JOURNEY_ID").orderBy(F.col("DATETIME").asc())
-    journeys_with_mismatching_lines = (
-        successful_journeys_spark_df.join(
-            non_interlining_journeys, on=["JOURNEY_ID"], how="right"
-        )
-        .withColumn("LINE_ID_NEXT", F.lead(F.col("LINE_ID"), 1).over(window))
-        .filter(F.col("EVENT") == "BOARDED")
-        .filter(F.col("LINE_ID") != F.col("LINE_ID_NEXT"))
-        .select("JOURNEY_ID")
-        .distinct()
+    successful_journeys_spark_df = successful_journeys_spark_df.withColumn(
+        "EVENT_PAIR", F.concat_ws("-", F.col("EVENT"), F.col("NEXT_EVENT"))
     )
-    return successful_journeys_spark_df.join(
-        journeys_with_mismatching_lines, on="JOURNEY_ID", how="leftanti"
+    successful_journeys_spark_df = successful_journeys_spark_df.withColumn(
+        "UNEXPECTED_EVENT_PAIR",
+        F.sum(
+            F.when(F.col("EVENT_PAIR").isin(allowed_event_pairs), 0).otherwise(1)
+        ).over(
+            event_window.rowsBetween(
+                Window.unboundedPreceding, Window.unboundedFollowing
+            )
+        ),
     )
+    return successful_journeys_spark_df.filter(
+        F.col("UNEXPECTED_EVENT_PAIR") == 0
+    ).drop("NEXT_EVENT", "UNEXPECTED_EVENT_PAIR")
 
 
 def validate_successful_journeys(successful_journeys_spark_df: SparkDF) -> SparkDF:
@@ -1456,10 +1503,14 @@ def validate_successful_journeys(successful_journeys_spark_df: SparkDF) -> Spark
     Returns:
         SparkDF: If passes, return the original SparkDF.
     """
+    successful_journeys_spark_df = successful_journeys_spark_df.cache()
     # ensure that columns aren't null
     for column in successful_journeys_spark_df.columns:
+        contains_no_nulls = (
+            successful_journeys_spark_df.filter(F.col(column).isNull()).first() is None
+        )
         assert (
-            successful_journeys_spark_df.filter(F.col(column).isNull()).count() == 0
+            contains_no_nulls
         ), f"Error: Nulls detected in {column} for successful journeys."
     return successful_journeys_spark_df
 
@@ -1468,7 +1519,7 @@ def remove_journeys_with_no_destination(action_history_spark_df: SparkDF) -> Spa
     """Remove journeys that have no destination. Unclear why this currently happens.
 
     Args:
-        action_history_spark_df (SparkDF): Description
+        action_history_spark_df (SparkDF): History of rider actions
 
     Returns:
         SparkDF: SparkDF with destinationless journeys removed.
