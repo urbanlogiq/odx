@@ -16,7 +16,7 @@ from joblib import Parallel, delayed
 from pandas import date_range
 import zipfile
 import requests
-import gzip
+import pandas as pd
 import shutil
 from io import BytesIO
 from pathlib import Path
@@ -27,9 +27,7 @@ import argparse
 def download_and_write(link, output_directory: Union[Path, None] = None):
     date = str(link).split("/")[-2]
     u = requests.get(link, stream=True)
-    if (
-        u.ok
-    ):  # could probably avoid writing out the content then reading it back in and writing it back out again.
+    if u.ok:
         z = zipfile.ZipFile(BytesIO(u.content))
         if output_directory:
             directory = Path(output_directory) / Path(
@@ -39,10 +37,15 @@ def download_and_write(link, output_directory: Union[Path, None] = None):
             directory = Path(f"RELEASE_DATE={date[0:4]}-{date[4:6]}-{date[6:]}")
         directory.mkdir(exist_ok=True)
         z.extractall(directory)
+        
+        # Convert each txt file to parquet
         for file in directory.glob("*.txt"):
-            with open(file, "rb") as f_in:
-                with gzip.open(str(file) + ".gz", "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+            # Read the CSV file
+            df = pd.read_csv(file)
+            # Write to parquet
+            parquet_file = file.with_suffix('.parquet')
+            df.to_parquet(parquet_file, index=False)
+            # Remove the original txt file
             file.unlink()
     else:
         pass
