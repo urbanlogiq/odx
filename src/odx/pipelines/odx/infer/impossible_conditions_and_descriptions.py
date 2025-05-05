@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pyspark.sql import functions as F
 from typing import List
+
+from pyspark.sql import functions as F
+
 from .utils import haversine_meters
 
 
@@ -30,21 +32,8 @@ def get_impossible_conditions_and_descriptions(
     """
     return [
         (
-            (F.col("ALIGHTING_ARRIVE_DATETIME") == F.col("DATETIME_NEXT")),
+            (F.col("ALIGHTING_STOP_ARRIVE_DATETIME") == F.col("DATETIME_NEXT")),
             "ALIGHTING DATETIME EQUAL TO NEXT BOARDING DATETIME",
-        ),
-        (
-            (
-                (
-                    F.col("INTERLINING_STOP_LAT").isNull()
-                    & (~F.col("INTERLINING_STOP_ID").isNull())
-                )
-                | (
-                    F.col("INTERLINING_STOP_LAT_NEXT").isNull()
-                    & (~F.col("INTERLINING_STOP_ID_NEXT").isNull())
-                )
-            ),
-            "INTERLINING STOP DOESN'T HAVE A LOCATION",
         ),
         (
             (F.col("STOP_ID") == F.col("STOP_ID_NEXT")),
@@ -53,7 +42,7 @@ def get_impossible_conditions_and_descriptions(
         (
             (
                 (
-                    F.col("ALIGHTING_ARRIVE_DATETIME").cast("long")
+                    F.col("ALIGHTING_STOP_ARRIVE_DATETIME").cast("long")
                     + F.col("MINIMUM_REQUIRED_TRANSFER_TIME_SECONDS")
                 )
                 > (F.col("DATETIME_NEXT").cast("long") + 300)
@@ -63,7 +52,7 @@ def get_impossible_conditions_and_descriptions(
         (
             (
                 (
-                    F.col("ALIGHTING_ARRIVE_DATETIME").cast("long")
+                    F.col("ALIGHTING_STOP_ARRIVE_DATETIME").cast("long")
                     <= F.col("DATETIME").cast("long")
                 )
             ),
@@ -72,7 +61,7 @@ def get_impossible_conditions_and_descriptions(
         (
             (
                 (
-                    F.col("ALIGHTING_ARRIVE_DATETIME").cast("long")
+                    F.col("ALIGHTING_STOP_ARRIVE_DATETIME").cast("long")
                     > F.col("DATETIME_NEXT").cast("long")
                 )
             ),
@@ -147,7 +136,7 @@ def get_impossible_conditions_and_descriptions(
             & F.col("MEAN_BOARDING_INTERVAL_SECONDS").isNull(),
             "NO BOARDING INTERVAL BOARDING TAP",
         ),
-        (F.col("STOP_LINE_ID_OLD").isNull(), "OLD LINE ID IS NULL"),
+        (F.col("BOARDING_STOP_LINE_ID_OLD").isNull() , "OLD LINE ID IS NULL"),
         (
             (
                 haversine_meters(
@@ -157,7 +146,7 @@ def get_impossible_conditions_and_descriptions(
                     F.col("ALIGHTING_STOP_LON"),
                 )
                 / (
-                    F.col("ALIGHTING_ARRIVE_DATETIME").cast("long")
+                    F.col("ALIGHTING_STOP_ARRIVE_DATETIME").cast("long")
                     - F.col("ARRIVE_DATETIME").cast("long")
                 )
             )

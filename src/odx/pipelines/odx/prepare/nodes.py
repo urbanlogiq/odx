@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nodes for preparing data for the ODX inference pipeline.
-"""
-from typing import Dict, List, Tuple
-from pyspark.sql import DataFrame as SparkDF, functions as F
+"""Nodes for preparing data for the ODX inference pipeline."""
+from typing import Dict, List
+
+from loguru import logger
+from pyspark.sql import DataFrame as SparkDF
+from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
 from pyspark.sql.window import Window
-from .utils import (
-    get_arrival_and_departure_datetimes,
-)
-from loguru import logger
+
+from .utils import get_arrival_and_departure_datetimes
 
 
 def validate_no_nulls_on_columns(
@@ -571,7 +571,15 @@ def build_blocks(stop_times_spark_df: SparkDF) -> SparkDF:
         ).otherwise(None),
     )
     return blocks.select(
-        "SERVICE_DATE", "SERVICE_ID", "BLOCK_ID", "TRIP_ID", "INTERLINES_WITH_TRIP_ID"
+        "SERVICE_DATE",
+        "SERVICE_ID",
+        "BLOCK_ID",
+        "TRIP_ID",
+        "INTERLINES_WITH_TRIP_ID",
+        "ROUTE_ID",
+        "ROUTE_ID_NEXT",
+        "END_STOP_ID",
+        "START_STOP_ID_NEXT",
     ).cache()
 
 
@@ -627,23 +635,33 @@ def create_interlining_trips(block_spark_df: SparkDF) -> SparkDF:
             spark_df = create_nested_trips(spark_df)
         return spark_df
 
-    block_spark_df = create_nested_trips(block_spark_df)
-    block_spark_df = block_spark_df.withColumn(
-        "CHAIN_LENGTH", F.size(F.col("TRIP_ID_LIST"))
-    )
+    trip_lists = create_nested_trips(block_spark_df)
+    trip_lists = trip_lists.withColumn("CHAIN_LENGTH", F.size(F.col("TRIP_ID_LIST")))
     window = Window.partitionBy("SERVICE_DATE", "TRIP_ID").orderBy(
         F.col("CHAIN_LENGTH").desc()
     )
-    block_spark_df = (
-        block_spark_df.select(
+    trip_lists = trip_lists.withColumn(
+        "INTERLINING_TRIP_ID",
+        F.when(
+            F.col("CHAIN_LENGTH") > 1,
+            F.conv(
+                F.substring(F.sha2(F.to_json(F.col("TRIP_ID_LIST")), 256), 1, 16),
+                16,
+                10,
+            ).cast("decimal(38,0)")  # decimal(38,0) allows for very large integers
+        ).otherwise(F.element_at(F.col("TRIP_ID_LIST"), 1))
+    )
+    trip_lists = (
+        trip_lists.select(
             "SERVICE_DATE",
             "CHAIN_LENGTH",
-            F.when(F.col("CHAIN_LENGTH") > 1, F.hash(F.col("TRIP_ID_LIST")))
-            .otherwise(F.element_at(F.col("TRIP_ID_LIST"), 1))
-            .alias("INTERLINING_TRIP_ID"),
+            "INTERLINING_TRIP_ID",
             F.explode(F.col("TRIP_ID_LIST")).alias("TRIP_ID"),
         )
         .withColumn("ROW_NUMBER", F.row_number().over(window))
         .filter(F.col("ROW_NUMBER") == 1)
     ).drop("ROW_NUMBER", "CHAIN_LENGTH")
-    return block_spark_df
+    assert (
+        trip_lists.filter(F.col("INTERLINING_TRIP_ID").isNull()).count() == 0
+    ), "error: some trips don't have an interlining trip id"
+    return trip_lists

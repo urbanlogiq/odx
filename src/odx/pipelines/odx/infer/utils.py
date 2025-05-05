@@ -1,4 +1,6 @@
-from pyspark.sql import functions as F,Column
+from pyspark.sql import Column
+from pyspark.sql import functions as F
+
 
 def haversine_meters(
     lat_1_col: Column, lon_1_col: Column, lat_2_col: Column, lon_2_col: Column

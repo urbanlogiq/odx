@@ -28,9 +28,11 @@
 
 """Project pipelines."""
 from typing import Dict
+
 from kedro.pipeline import Pipeline, pipeline
-from .pipelines.odx.prepare import pipeline as prepare_odx
+
 from .pipelines.odx.infer import pipeline as infer_odx
+from .pipelines.odx.prepare import pipeline as prepare_odx
 
 
 def register_pipelines() -> Dict[str, Pipeline]:

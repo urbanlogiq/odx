@@ -15,30 +15,31 @@
 """Pipeline for preparing data for HOP ODX inference
 """
 from kedro.pipeline import Pipeline, node
+
 from ..infer.nodes import get_year_months
 from .nodes import (
-    validate_no_nulls_on_columns,
-    fill_transaction_ticket_description_nulls_with_unknown,
-    map_line_ids,
-    create_datetime_column,
-    remove_duplicate_taps,
-    create_date_column,
-    identify_unwanted_operators,
-    remove_unknown_stops,
     add_source_column,
-    merge_stop_locations_onto_stop_times,
-    get_relevant_stop_times,
-    merge_trip_information_onto_avl_stop_times,
-    convert_string_route_ids_to_integers,
-    build_stop_times_from_stops_avl,
-    get_trip_id_start_end_stop_ids_and_times,
     build_blocks,
-    create_interlining_trips,
-    get_arrival_datetime_hour,
-    repartition_by,
-    coalesce_stop_times,
     build_stop_headways,
+    build_stop_times_from_stops_avl,
+    coalesce_stop_times,
+    convert_string_route_ids_to_integers,
+    create_date_column,
+    create_datetime_column,
+    create_interlining_trips,
+    fill_transaction_ticket_description_nulls_with_unknown,
+    get_arrival_datetime_hour,
+    get_relevant_stop_times,
+    get_trip_id_start_end_stop_ids_and_times,
+    identify_unwanted_operators,
     map_column_name_to_upper_case,
+    map_line_ids,
+    merge_stop_locations_onto_stop_times,
+    merge_trip_information_onto_avl_stop_times,
+    remove_duplicate_taps,
+    remove_unknown_stops,
+    repartition_by,
+    validate_no_nulls_on_columns,
 )
 
 
