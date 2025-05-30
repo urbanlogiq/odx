@@ -1279,46 +1279,36 @@ def reshape_journeys(
                 < F.col("ALIGHTING_STOP_ARRIVE_DATETIME")
             )
         )
-        interlinings_starts = (
-            interlining_events.select(
-                "FARE_CATEGORY_DESCRIPTION",
-                F.col("INTERLINING_ARRIVE_DATETIME").alias("DATETIME"),
-                F.col("INTERLINING_STOP_ID").alias("STOP_ID"),
-                "CARD_ID",
-                "JOURNEY_ID",
-                F.col("BOARDING_STOP_LINE_ID_OLD").alias("LINE_ID"),
-                F.col("INTERLINING_STOP_LAT").alias("STOP_LAT"),
-                F.col("INTERLINING_STOP_LON").alias("STOP_LON"),
-                F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
-                "CONFIDENCE",
-                "VALIDITY_SCORE",
-            )
-            .withColumn("EVENT", F.lit("INTERLINE_STARTED"))
-            .withColumn("EVENT_TYPE", F.lit("MID_JOURNEY"))
-        )
-        interlinings_ends = (
-            interlining_events.select(
-                "FARE_CATEGORY_DESCRIPTION",
-                F.col("INTERLINING_DEPARTURE_DATETIME").alias("DATETIME"),
-                F.col("INTERLINING_STOP_ID").alias("STOP_ID"),
-                "CARD_ID",
-                "JOURNEY_ID",
-                F.col("ALIGHTING_STOP_ROUTE_ID").alias("LINE_ID"),
-                F.col("INTERLINING_STOP_LAT").alias("STOP_LAT"),
-                F.col("INTERLINING_STOP_LON").alias("STOP_LON"),
-                F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
-                "CONFIDENCE",
-                "VALIDITY_SCORE",
-            )
-            .withColumn("EVENT", F.lit("INTERLINE_ENDED"))
-            .withColumn("EVENT_TYPE", F.lit("MID_JOURNEY"))
-        )
+        interlinings_starts = interlining_events.select(
+            "FARE_CATEGORY_DESCRIPTION",
+            F.col("INTERLINING_ARRIVE_DATETIME").alias("DATETIME"),
+            F.col("INTERLINING_STOP_ID").alias("STOP_ID"),
+            "CARD_ID",
+            "JOURNEY_ID",
+            F.col("BOARDING_STOP_LINE_ID_OLD").alias("LINE_ID"),
+            F.col("INTERLINING_STOP_LAT").alias("STOP_LAT"),
+            F.col("INTERLINING_STOP_LON").alias("STOP_LON"),
+            F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
+            "CONFIDENCE",
+            "VALIDITY_SCORE",
+        ).withColumn("EVENT", F.lit("INTERLINE_STARTED"))
+        interlinings_ends = interlining_events.select(
+            "FARE_CATEGORY_DESCRIPTION",
+            F.col("INTERLINING_DEPARTURE_DATETIME").alias("DATETIME"),
+            F.col("INTERLINING_STOP_ID").alias("STOP_ID"),
+            "CARD_ID",
+            "JOURNEY_ID",
+            F.col("ALIGHTING_STOP_ROUTE_ID").alias("LINE_ID"),
+            F.col("INTERLINING_STOP_LAT").alias("STOP_LAT"),
+            F.col("INTERLINING_STOP_LON").alias("STOP_LON"),
+            F.col("STOP_DIRECTION_ID").alias("DIRECTION_ID"),
+            "CONFIDENCE",
+            "VALIDITY_SCORE",
+        ).withColumn("EVENT", F.lit("INTERLINE_ENDED"))
         interlinings = interlinings_starts.unionByName(interlinings_ends)
-        events = boardings.unionByName(
-            alightings, allowMissingColumns=True
-        ).unionByName(interlinings, allowMissingColumns=True)
+        events = boardings.unionByName(alightings).unionByName(interlinings)
     else:
-        events = boardings.unionByName(alightings, allowMissingColumns=True)
+        events = boardings.unionByName(alightings)
     return events
 
 
@@ -1385,6 +1375,7 @@ def get_event_type(action_history_spark_df: SparkDF) -> SparkDF:
         )
         .drop("ROW_ID", "MAX_ROW_ID", "IS_FINAL_EVENT")
     )
+    interlines = interlines.withColumn("EVENT_TYPE", F.lit("MID_JOURNEY"))
     action_history_spark_df = interlines.unionByName(non_interlines)
     return action_history_spark_df
 
@@ -1609,7 +1600,7 @@ def get_run_metrics(
             / (successful_journeys_count + failed_journeys_count)
         ),
         "MEAN_CONFIDENCE": mean_confidence,
-        "PERCENT_INTERLINE": int(100*interline_ratio),
+        "PERCENT_INTERLINE": int(100 * interline_ratio),
         **reasons_for_failure,
     }
     logger.info(metrics)
