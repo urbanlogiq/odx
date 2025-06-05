@@ -1,11 +1,12 @@
 # Origin/Destination/Transfer (ODX) Inference
 This repository contains code that allows users to infer Origin/Destination/Transfer events for transit riders in the TriMet service area.
 
-## Transit Services Covered
-Currently the code only considers trips that are completed in their entirety through the TriMet service network. Not included are trips that use:
+#### ⚠️ Transit Services Covered
+Currently the code only considers trips that are completed in their entirety through the TriMet service network. <br/>
+Not included are trips that use:
 
-- Portland Streetcar
-- CTRAN
+* Portland Streetcar
+* CTRAN
 
 ## Data Requirements
 The code requires three key datasets to function:
@@ -132,28 +133,29 @@ Below is the release history of all past versions of the ODX model.
 
 #### v2.1 (Interlining Regression Fix)
 
-The current code showed a regression in the inference of interlining journeys. The issues came from logical errors in the insertion of interlining events after the journey inference had been completed. Version V2.1 fixes these issues by:
+The current code showed a regression in the inference of interlining journeys. The issues came from logical errors in the insertion of interlining events after the journey inference had been completed. Version v2.1 fixes the issue by introducing these changes:
 * Replace component interlining trips with synthesized trips representing the entire journey of the vehicle, with interlining stops/trips marked as such
-* Include a check for expected event type pairs and remove journeys that don't conform (approximately 3% of journeys). The primary source of unexpected event type pairs (e.g., a boarding followed by another boarding) seems to stem from riders who tap a while after they've boarded a bus. Producing adequate inferences in these cases would require a change in the overall inference approach
+* Include a check for expected event type pairs and remove journeys that don't conform (approximately 3% of journeys). The primary source of unexpected event-type pairs (e.g., a boarding followed by another boarding) stems from riders who tap a while after they've boarded a bus. Producing adequate inferences in these cases would require a change in the overall inference approach
 * Set the boarding time to the boarding trip arrival time rather than the observed tap time
-* Adjust the impossible journeys conditions to reflect fixes/changes
-* Include a metric calculating the number of journeys with an interlining event
+* Adjust the impossible journey conditions to reflect fixes/changes
+* Include a metric to calculate the number of journeys with an interlining event
 
 #### v2.0 (Short Trips Fix)
 
-In March 2024, it was identified that a significant set of journeys in the ODX data were shown to be 'single stop', i.e., a rider would board, ride one stop, then alight. This issue mainly affected MAX lines. Version V2.0 introduced a new MAX lines probability function, and it also:
-* Increase the radius for alternate MAX boarding locations
-* Introduce a validity score to help filter out unlikely journeys
+In March 2024, it was identified that a significant set of journeys in the ODX data were shown to be 'single stop', i.e., a rider would board, ride one stop, then alight. This issue mainly affected MAX lines. Version v2.0 introduced a new MAX lines probability function and the changes listed below to fix the short trips bug:
 * Remove journeys inferred based on identical subsequent boarding locations
+* Increase the radius (from 200ft to 500 ft) for alternate MAX boarding locations
+* Introduce a validity score to filter out unlikely journeys whose score is below a set threshold
 * Fix normalization bug on MAX line/direction selection
 * Improve code readability
+
 
 #### v1.5 (Add Interlining)
 
 * Introduce a boarding likelihood per mode (bus or MAX), replacing the previous one-size-fits-all approach
 * Remove the assumption that the first tap in a 2.5-hour window was an origin. Origins are now defined based on gaps in tapping activity
 * Remove the assumption that all events for a journey must occur within a 2.5-hour time block. Journeys are now delineated according to inferred rider decisions concerning boarding opportunities
-* Replace the assumption that three missed boarding opportunities indicate an end to a journey was and use a headway-aware splitting approach instead
+* Replace the assumption that three missed boarding opportunities indicate an end to a journey and use a headway-aware splitting approach instead
 * Introduce interlining logic
 
 
